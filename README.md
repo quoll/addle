@@ -2,12 +2,14 @@
 
 [![test](https://github.com/quoll/addle/actions/workflows/test.yml/badge.svg)](https://github.com/quoll/addle/actions/workflows/test.yml)
 
-A [DLe](https://github.com/quoll/DLe/wiki) parser and writer for
-[Owlready2](https://owlready2.readthedocs.io/).
+A [DLe](https://github.com/quoll/DLe/wiki) parser and writer for the
+[Owlready2](https://owlready2.readthedocs.io/). This is a library for working
+with the [Web Ontology Language (OWL)](https://www.w3.org/TR/owl2-overview/).
 
 DLe (*Description Logic, Extended*) is a compact formal syntax for ontologies
-that is readable by both people and language models. It is standard Description
-Logic plus a small set of additions: annotations, comments, multi-role predicate
+that is readable by both people and language models. It is standard
+[Description Logic](https://en.wikipedia.org/wiki/Description_logic) plus a
+small set of additions: annotations, comments, multi-role predicate
 restrictions, and comments.
 
 `addle` reads a DLe document into an Owlready2 ontology, and writes an Owlready2
@@ -22,9 +24,8 @@ print(onto.Animal.is_a)
 print(addle.dumps(onto))
 ```
 
-Because the result is an ordinary Owlready2 ontology, everything else Owlready2
-does still applies — SPARQL queries, reasoning with HermiT or Pellet, and saving
-to RDF/XML or N-Triples.
+Everything in Owlready2 still applies: SPARQL queries, reasoning with HermiT
+or Pellet, and saving to RDF/XML or N-Triples.
 
 ## Installation
 
@@ -65,6 +66,18 @@ for warning in warnings:
 `onto=` to add to an existing ontology, and `base_iri=` to override the base
 IRI. A malformed document raises `addle.DleSyntaxError`, which reports every
 diagnostic the parse produced with line and column.
+
+## DLe Syntax
+
+The [DLe wiki](https://github.com/quoll/DLe/wiki) provides all the documentation
+for standard Description Logic (DL) and for the extensions provided by DLe.
+
+The wiki includes:
+* [Syntax for standard DL](https://github.com/quoll/DLe/wiki/1.-Description-Logic-Syntax)
+* [Syntax for DL extensions](https://github.com/quoll/DLe/wiki/4.-Non%E2%80%90DL-Syntax)
+* [Mappings between OWL and DL](https://github.com/quoll/DLe/wiki/2.-DL-and-OWL)
+* [Standard representations of OWL in DL](https://github.com/quoll/DLe/wiki/5.-OWL-DL-Translations)
+* [Theoretic Semantics for DL](https://github.com/quoll/DLe/wiki/3.-DL-Semantics)
 
 ## How DLe maps onto Owlready2
 
@@ -121,8 +134,6 @@ Reading and writing preserves **content**, not layout. Specifically:
 
 ## Known limitations
 
-These are real gaps, not rough edges to be papered over:
-
 - **OWL punning is not representable.** If an IRI is used as both a property and
   an individual — `∃statementRelationship.{studies}` where `studies` is also a
   property — Owlready2 maps one IRI to one entity and cannot hold both. addle
@@ -142,17 +153,17 @@ These are real gaps, not rough edges to be papered over:
 
 The reference implementation is
 [`io.github.quoll.owlapi:dlextended-parsers`](https://github.com/quoll/DLe),
-built on the OWL API. addle is a separate implementation, not a port: the OWL API
+built on the OWL API. adDLe is a separate implementation, not a port: the OWL API
 discovers parsers and storers through `ServiceLoader`, and Owlready2 has no
 comparable extension point, so addle is a top-level library rather than a plugin.
 
-What the two share is the **language**. Two files are copies of their
+The two projects share the **language**. Two files are copies of their
 counterparts in the Java repository, and must never diverge:
 
 | File | Why |
 |---|---|
 | `grammar/DLESyntax.g4` | defines the language both implementations accept |
-| `tests/data/wildlife-reserve-test.dle` | the conformance corpus that proves they agree |
+| `tests/data/wildlife-reserve-test.dle` | the conformance corpus to test agreement |
 
 They are copies rather than a submodule deliberately: a submodule is paid for on
 every clone, and this grammar changes about once a year. The cost of a copy is
@@ -172,7 +183,7 @@ upstream, while nobody is working on addle, so it needs a trigger that isn't
 someone's attention.
 
 The generated ANTLR parser is checked into `src/addle/_antlr`, so installing
-addle needs neither Java nor the ANTLR tool. Regeneration is only required when
+addle does not need Java nor the ANTLR tool. Regeneration is only required when
 the grammar itself changes.
 
 ## Development
