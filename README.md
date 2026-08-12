@@ -1,15 +1,14 @@
-# addle
+# adDLe
 
 [![test](https://github.com/quoll/addle/actions/workflows/test.yml/badge.svg)](https://github.com/quoll/addle/actions/workflows/test.yml)
 
 A [DLe](https://github.com/quoll/DLe/wiki) parser and writer for
 [Owlready2](https://owlready2.readthedocs.io/).
 
-DLe — *Description Logic, Extended* — is a compact formal syntax for ontologies
+DLe (*Description Logic, Extended*) is a compact formal syntax for ontologies
 that is readable by both people and language models. It is standard Description
-Logic plus a small set of additions: predicate definitions (`≝`), multi-role
-predicate restrictions (`∃r₁,…,rₙ.P`), annotations (`@label`, `@doc`, `@db`,
-`@storage`, `@ann`), and `#` comments.
+Logic plus a small set of additions: annotations, comments, multi-role predicate
+restrictions, and comments.
 
 `addle` reads a DLe document into an Owlready2 ontology, and writes an Owlready2
 ontology back out as DLe.
