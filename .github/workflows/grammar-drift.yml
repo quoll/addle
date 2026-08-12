@@ -1,0 +1,127 @@
+# Watch for the grammar and conformance corpus drifting away from the reference
+# implementation at quoll/DLe.
+#
+# Those files are copies, not shared through a submodule. A copy can silently
+# diverge, and the divergence that matters happens upstream — while nobody is
+# working on addle. So the trigger is time, not a push: a push-triggered job
+# would only ever catch drift the pusher introduced, and would also turn every
+# PR red whenever an unrelated external clone failed.
+#
+# On mismatch this opens an issue rather than only failing. A scheduled workflow
+# that merely goes red is close to useless on a quiet repository, because nobody
+# visits the Actions tab.
+
+name: grammar drift
+
+on:
+  schedule:
+    # Mondays, 07:00 UTC. The grammar changes about once a year; weekly is ample.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out addle
+        uses: actions/checkout@v4
+
+      - name: Check out the reference implementation
+        uses: actions/checkout@v4
+        with:
+          repository: quoll/DLe
+          path: reference
+          # quoll/DLe is public, so the default token suffices. Only the two
+          # shared files are needed, but the repository is small.
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compare shared files
+        id: compare
+        run: |
+          set +e
+          python tools/grammar.py check --against reference > drift.txt 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat drift.txt
+
+      - name: Record which reference commit was compared
+        if: steps.compare.outputs.status != '0'
+        run: |
+          {
+            echo ""
+            echo "Compared against quoll/DLe at $(git -C reference rev-parse --short HEAD)"
+            echo "($(git -C reference log -1 --format='%ad, %s' --date=short))"
+          } >> drift.txt
+
+      # Re-filing every Monday would train you to ignore the issue, so an open
+      # one suppresses further reports until it is closed.
+      - name: Look for an existing report
+        if: steps.compare.outputs.status != '0'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          number=$(gh issue list \
+            --state open \
+            --search 'in:title "Grammar drift detected"' \
+            --json number \
+            --jq '.[0].number // ""')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Open an issue
+        if: steps.compare.outputs.status != '0' && steps.existing.outputs.number == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "A file addle copies from [quoll/DLe](https://github.com/quoll/DLe)"
+            echo "no longer matches its source."
+            echo
+            echo '```'
+            cat drift.txt
+            echo '```'
+            echo
+            echo "### Why this matters"
+            echo
+            echo "The grammar defines the language both implementations accept, and the"
+            echo "conformance corpus is what proves they agree. If they diverge, addle and"
+            echo "the Java library can both claim to implement DLe while accepting"
+            echo "different documents."
+            echo
+            echo "### To reconcile"
+            echo
+            echo "If the upstream change is intended, copy it across and re-record:"
+            echo
+            echo '```bash'
+            echo "cp <DLe>/parsers/src/main/antlr4/org/semanticweb/owlapi/dlesyntax/DLESyntax.g4 grammar/"
+            echo "cp <DLe>/parsers/src/test/resources/data/wildlife-reserve-test.dle tests/data/"
+            echo "tools/grammar.py generate && tools/grammar.py update"
+            echo "make test"
+            echo '```'
+            echo
+            echo "Closing this issue re-arms the weekly check."
+            echo
+            echo "[Workflow run]($RUN_URL)"
+          } > body.md
+
+          gh issue create \
+            --title "Grammar drift detected against quoll/DLe" \
+            --body-file body.md
+
+      - name: Note that a report is already open
+        if: steps.compare.outputs.status != '0' && steps.existing.outputs.number != ''
+        run: |
+          echo "Drift still present; issue #${{ steps.existing.outputs.number }} is already open." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if drift was found
+        if: steps.compare.outputs.status != '0'
+        run: exit 1

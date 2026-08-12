@@ -34,10 +34,20 @@ GENERATED = ROOT / "src" / "addle" / "_antlr"
 #: generated code and its runtime are only compatible within a minor version.
 ANTLR_VERSION = "4.13.1"
 
-#: Where the Java implementation keeps the same file, relative to a DLe checkout.
-JAVA_GRAMMAR_PATH = (
-    "parsers/src/main/antlr4/org/semanticweb/owlapi/dlesyntax/DLESyntax.g4"
-)
+#: Files copied from the reference implementation, as
+#: (local path, path within a DLe checkout, why it must not diverge).
+SHARED_FILES = [
+    (
+        GRAMMAR,
+        "parsers/src/main/antlr4/org/semanticweb/owlapi/dlesyntax/DLESyntax.g4",
+        "the grammar defines the language both implementations accept",
+    ),
+    (
+        ROOT / "tests" / "data" / "wildlife-reserve-test.dle",
+        "parsers/src/test/resources/data/wildlife-reserve-test.dle",
+        "the conformance corpus is what proves the two agree",
+    ),
+]
 
 
 def digest(path):
@@ -64,25 +74,40 @@ def cmd_check(args):
         status = 1
 
     if args.against:
-        other = Path(args.against)
-        if other.is_dir():
-            other = other / JAVA_GRAMMAR_PATH
+        status = _compare_with_reference(Path(args.against)) or status
+
+    if status == 0:
+        print("grammar hash OK (%s)" % actual[:16])
+    return status
+
+
+def _compare_with_reference(target):
+    """Diff every shared file against a DLe checkout (or a single grammar file)."""
+    if target.is_file():
+        # A path straight to a DLESyntax.g4 — compare only that.
+        pairs = [(GRAMMAR, target, SHARED_FILES[0][2])]
+    elif target.is_dir():
+        pairs = [(local, target / rel, why) for local, rel, why in SHARED_FILES]
+    else:
+        print("cannot compare: %s does not exist" % target, file=sys.stderr)
+        return 1
+
+    status = 0
+    for local, other, why in pairs:
+        name = local.relative_to(ROOT)
         if not other.exists():
-            print("cannot compare: %s does not exist" % other, file=sys.stderr)
-            return 1
-        if digest(other) != actual:
+            print("cannot compare %s: %s does not exist" % (name, other), file=sys.stderr)
+            status = 1
+        elif digest(local) != digest(other):
             print(
-                "grammar has diverged from the reference implementation:\n  %s\n"
-                "The two must define the same language. Reconcile them before releasing."
-                % other,
+                "%s has diverged from the reference implementation:\n"
+                "  local:     %s\n  reference: %s\n"
+                "  why it matters: %s" % (name, local, other, why),
                 file=sys.stderr,
             )
             status = 1
         else:
-            print("grammar matches %s" % other)
-
-    if status == 0:
-        print("grammar hash OK (%s)" % actual[:16])
+            print("%s matches %s" % (name, other))
     return status
 
 

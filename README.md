@@ -1,5 +1,7 @@
 # addle
 
+[![test](https://github.com/quoll/addle/actions/workflows/test.yml/badge.svg)](https://github.com/quoll/addle/actions/workflows/test.yml)
+
 A [DLe](https://github.com/quoll/DLe/wiki) parser and writer for
 [Owlready2](https://owlready2.readthedocs.io/).
 
@@ -145,16 +147,30 @@ built on the OWL API. addle is a separate implementation, not a port: the OWL AP
 discovers parsers and storers through `ServiceLoader`, and Owlready2 has no
 comparable extension point, so addle is a top-level library rather than a plugin.
 
-What the two share is the **language**: `grammar/DLESyntax.g4` is a copy of the
-grammar in the Java repository, and the encodings above are byte-compatible.
-Because the copy could drift, it is checked:
+What the two share is the **language**. Two files are copies of their
+counterparts in the Java repository, and must never diverge:
+
+| File | Why |
+|---|---|
+| `grammar/DLESyntax.g4` | defines the language both implementations accept |
+| `tests/data/wildlife-reserve-test.dle` | the conformance corpus that proves they agree |
+
+They are copies rather than a submodule deliberately: a submodule is paid for on
+every clone, and this grammar changes about once a year. The cost of a copy is
+that it can drift silently, so drift is checked instead:
 
 ```bash
-tools/grammar.py check                       # verify against the recorded hash
-tools/grammar.py check --against ../dle      # compare with a DLe checkout
+tools/grammar.py check                       # verify the grammar's recorded hash
+tools/grammar.py check --against ../dle      # diff both files against a DLe checkout
 tools/grammar.py generate                    # regenerate the parser after a change
 tools/grammar.py update                      # re-record the hash
 ```
+
+The hash check runs as part of the test suite, so it fires on every local run and
+in CI. The comparison against the reference implementation runs weekly on GitHub
+Actions and opens an issue if the copies diverge — the drift that matters happens
+upstream, while nobody is working on addle, so it needs a trigger that isn't
+someone's attention.
 
 The generated ANTLR parser is checked into `src/addle/_antlr`, so installing
 addle needs neither Java nor the ANTLR tool. Regeneration is only required when
