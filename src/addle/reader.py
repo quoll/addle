@@ -52,6 +52,7 @@ from .vocab import (
     INLINE_COMMENT_IRI,
     LABEL_IRI,
     OWL_NS,
+    RDF_NS,
     PREDICATE_IRI,
     RDFS_NS,
     STORAGE_IRI,
@@ -476,6 +477,46 @@ class Reader:
             if len(exprs) == 3:
                 target = exprs[2]
                 target.property_chain.append(PropertyChain([exprs[0], exprs[1]]))
+            return
+
+        if isinstance(ctx, P.ClassAssertionAxiomContext):
+            self._class_assertion(ctx)
+            return
+
+        if isinstance(ctx, P.PrefixedClassAssertionAxiomContext):
+            # `a:C` arrives as one token, indistinguishable from a prefixed name.
+            # A lone prefixed name has never been a statement, so if the prefix is
+            # declared this is simply not one; if it is not, the only reading left
+            # is the assertion, and that is the textbook spelling.
+            text = ctx.PREFIXED_NAME().getText()
+            prefix, _, local = text.partition(":")
+            if prefix in self.prefixes:
+                raise DleSemanticError(
+                    "%r on its own is not a statement. %r is a declared prefix, so "
+                    "this reads as a name rather than as the assertion %s(%s); put a "
+                    "space around the colon if the assertion is what was meant."
+                    % (text, prefix + ":", local, prefix))
+            self._assert_named_class(prefix, local)
+            return
+
+        if isinstance(ctx, P.ObjectAssertionAxiomContext):
+            self._require_bare_separator(ctx.PNAME_NS())
+            self._assert_property(ctx.name(2), ctx.name(0), ctx.name(1))
+            return
+
+        if isinstance(ctx, P.DataAssertionAxiomContext):
+            self._require_bare_separator(ctx.PNAME_NS())
+            self._assert_property(ctx.name(1), ctx.name(0),
+                                  self._literal_value(ctx.literal()))
+            return
+
+        if isinstance(ctx, (P.NegativeObjectAssertionAxiomContext,
+                            P.NegativeDataAssertionAxiomContext)):
+            self._require_bare_separator(ctx.PNAME_NS())
+            is_object = isinstance(ctx, P.NegativeObjectAssertionAxiomContext)
+            target = (ctx.name(1) if is_object else self._literal_value(ctx.literal()))
+            self._negative_assertion(
+                ctx.name(2) if is_object else ctx.name(1), ctx.name(0), target, is_object)
             return
 
         if isinstance(ctx, P.SubClassAxiomContext):
@@ -984,6 +1025,114 @@ class Reader:
 
     # ── deferred axioms ──────────────────────────────────────────────────────
 
+    # ── assertions ───────────────────────────────────────────────────────────
+
+    def _require_bare_separator(self, separator):
+        """The ``:`` of an assertion must be bare, not a prefix.
+
+        ``a ex: C`` is not an assertion with an odd separator; the colon here
+        separates the parts of the statement and is no part of a name.
+        """
+        text = separator.getText()
+        if text != ":":
+            raise DleSemanticError(
+                "%r is not the separator of an assertion; write a bare ':'. The colon "
+                "here separates the parts of the statement and is not part of a name."
+                % text)
+
+    def _class_assertion(self, ctx):
+        """``a : C`` — but two readings exist when it was written without spaces.
+
+        ``ex:a:C`` is either the individual ``ex:a`` of class ``C``, or the
+        individual ``ex`` of class ``a:C``. Which one depends on the prefixes the
+        document declares, and they are all known by now: the grammar puts every
+        prefix declaration before every statement. The second reading only exists
+        when the class side is a single bare name — there is nothing to move the
+        first name's local part onto otherwise.
+        """
+        self._require_bare_separator(ctx.PNAME_NS())
+        first = ctx.name().getText()
+        lone_class = scanner._single_bare_name(ctx.classExpr())
+        second = lone_class if lone_class is not None else ctx.classExpr().getText()
+        spaced = not (_adjacent(ctx.name().stop, ctx.PNAME_NS().symbol)
+                      and _adjacent(ctx.PNAME_NS().symbol, ctx.classExpr().start))
+        colon = first.find(":")
+        reading_b = (not spaced and colon > 0 and ":" not in second
+                     and lone_class is not None)
+        if reading_b:
+            a_valid = first[:colon] in self.prefixes
+            b_prefix = first[colon + 1:]
+            b_valid = b_prefix in self.prefixes
+            if a_valid and b_valid:
+                raise DleSemanticError(
+                    "%r is ambiguous: both %r and %r are declared prefixes, so this is "
+                    "either the individual %s of class %s, or the individual %s of class "
+                    "%s. Put a space around the colon to say which."
+                    % (first + ":" + second, first[:colon] + ":", b_prefix + ":",
+                       first, second, first[:colon], b_prefix + ":" + second))
+            if b_valid:
+                # The individual is the part before the colon, in the default namespace.
+                self._assert_named_class(first[:colon], b_prefix + ":" + second)
+                return
+        if lone_class is not None:
+            self._assert_named_class(first, second)
+            return
+        # A complex class expression on the right: the individual belongs to it.
+        individual = self.individual_for(first)
+        individual.is_a.append(self._class_expr(ctx.classExpr()))
+
+    def _assert_named_class(self, individual_name, class_name):
+        """``C(a)`` where C is named rather than an expression."""
+        if is_datatype_name(class_name):
+            raise DleSemanticError(
+                "expected a class expression here, but found the datatype %s"
+                % class_name)
+        individual = self.individual_for(individual_name)
+        cls = self.entity_for(class_name)
+        if cls not in individual.is_a:
+            individual.is_a.append(cls)
+
+    def _assert_property(self, prop_ctx, subject_ctx, value):
+        """``(a,b) : r`` and ``(a,"x") : d``.
+
+        Through Owlready2's own attribute machinery rather than by writing
+        triples, so that the assertion is visible to ``a.r`` as well as to the
+        quadstore. A raw triple would be invisible until the world was reloaded.
+        """
+        prop = self.entity_for(prop_ctx.getText())
+        subject = self.individual_for(subject_ctx.getText())
+        if isinstance(value, P.NameContext):
+            value = self.individual_for(value.getText())
+        name = getattr(prop, "python_name", None) or prop.name
+        getattr(subject, name).append(value)
+
+    def _negative_assertion(self, prop_ctx, subject_ctx, target, is_object):
+        """``¬(a,b) : r`` — OWL's reified negative assertion, written as raw RDF.
+
+        Owlready2 has no model for these, so they go in as triples, which is the
+        same course addle already takes for ``owl:hasKey``: the quadstore keeps
+        them, every other serialiser sees them, and no Owlready2 accessor
+        exposes them.
+        """
+        subject = self.individual_for(subject_ctx.getText())
+        prop = self.entity_for(prop_ctx.getText())
+        bnode = self.world.new_blank_node()
+        self.onto._add_obj_triple_spo(
+            bnode, self._storid(RDF_NS + "type"),
+            self._storid(OWL_NS + "NegativePropertyAssertion"))
+        self.onto._add_obj_triple_spo(
+            bnode, self._storid(OWL_NS + "sourceIndividual"), subject.storid)
+        self.onto._add_obj_triple_spo(
+            bnode, self._storid(OWL_NS + "assertionProperty"), prop.storid)
+        if is_object:
+            self.onto._add_obj_triple_spo(
+                bnode, self._storid(OWL_NS + "targetIndividual"),
+                self.individual_for(target.getText()).storid)
+        else:
+            obj, datatype = self.onto._to_rdf(target)
+            self.onto._add_data_triple_spod(
+                bnode, self._storid(OWL_NS + "targetValue"), obj, datatype)
+
     def _apply_key_axioms(self):
         """Write ``owl:hasKey`` triples directly.
 
@@ -1034,6 +1183,11 @@ def And_of(parts):
 
 def _strip_angle(text):
     return text[1:-1] if text.startswith("<") else text
+
+
+def _adjacent(left, right):
+    """Whether two tokens touch, with no space between them."""
+    return left.stop + 1 == right.start
 
 
 def _predicate_ref_name(ctx):
