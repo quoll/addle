@@ -8,6 +8,8 @@ a document into a smaller one every time it passes through.
 
 import pytest
 
+from owlready2 import World
+
 import addle
 from addle.errors import DleSemanticError
 
@@ -153,5 +155,7 @@ def test_a_document_of_assertions_is_stable(parse, render):
     source = (PREFIX + 'a : Person\n(a,b) : knows\n(a,"42") : age\n'
               '¬(a,c) : knows\n¬(a,"7") : age\nlonely : ⊤\n')
     first = render(parse(source))
-    second = render(addle.loads(first))
+    # A world of its own: the default world is shared with every other test
+    # that omits one, so re-reading there picks up their entities too.
+    second = render(addle.loads(first, world=World()))
     assert first == second
