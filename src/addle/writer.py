@@ -56,6 +56,8 @@ EQUIV = "≡"
 AND = "⊓"
 OR_OP = "⊔"
 NOT = "¬"
+SAME = "="
+DIFFERENT = "≠"
 EXISTS = "∃"
 FORALL = "∀"
 INVERSE = "⁻"
@@ -192,6 +194,7 @@ class Writer:
                 lines.extend(block)
                 lines.append("")
 
+        lines.extend(self._different_individual_lines())
         lines.extend(self._universal_axioms())
         lines.extend(self._orphan_axioms())
 
@@ -388,6 +391,7 @@ class Writer:
             if cls is Thing:
                 continue
             lines.append("%s : %s" % (name, self.concept(cls)))
+        lines.extend(self._same_individual_lines(individual, name))
         lines.extend(self._assertion_lines(individual, name))
         lines.extend(self._negative_assertion_lines(individual, name))
         if not lines and not self._is_external(individual) \
@@ -418,6 +422,16 @@ class Writer:
                     entity = self._one_object(bnode, w._abbreviate(predicate))
                     if entity is not None and getattr(entity, "iri", None):
                         found.add(entity.iri)
+            # `a = b` and `x ≠ y` name their members too.
+            for group in self.onto.different_individuals():
+                for member in group.entities:
+                    if getattr(member, "iri", None):
+                        found.add(member.iri)
+            for subject in self.onto.individuals():
+                for other in subject.equivalent_to:
+                    if getattr(other, "iri", None):
+                        found.add(other.iri)
+                        found.add(subject.iri)
             for prop in self.onto.object_properties():
                 for subject in self.onto.individuals():
                     for value in self._values_of(subject, prop):
@@ -426,6 +440,16 @@ class Writer:
                             found.add(iri)
             self._asserted_object_iris = found
         return self._asserted_object_iris
+
+    def _same_individual_lines(self, individual, name):
+        """``a = b = c`` for the individuals this one is declared the same as."""
+        others = [other for other in individual.equivalent_to
+                  if getattr(other, "iri", None)]
+        if not others:
+            return []
+        return ["%s %s %s" % (name, SAME,
+                              (" %s " % SAME).join(self.shorten(o.iri)
+                                                   for o in others))]
 
     def _assertion_lines(self, individual, name):
         """``(a,b) : r`` and ``(a,"x") : d`` for every assertion ``a`` makes."""
@@ -611,6 +635,22 @@ class Writer:
                 % (self.shorten(entity.iri), AND, self.shorten(other.iri), SUBCLASS, BOTTOM)
             )
         return lines
+
+    def _different_individual_lines(self):
+        """``x ≠ y ≠ z`` — one line per AllDifferent set.
+
+        Not attached to any one individual's block: the axiom is about the set,
+        and putting it under its first member would imply an order the axiom
+        does not have.
+        """
+        lines = []
+        for group in self.onto.different_individuals():
+            members = [m for m in group.entities if getattr(m, "iri", None)]
+            if len(members) < 2:
+                continue
+            lines.append((" %s " % DIFFERENT).join(
+                self.shorten(m.iri) for m in members))
+        return sorted(lines)
 
     def _universal_axioms(self):
         """``⊤ ⊑ X`` axioms, stored as ``owl:Thing rdfs:subClassOf _:x``."""
