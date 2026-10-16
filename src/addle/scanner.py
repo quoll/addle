@@ -11,6 +11,8 @@ This mirrors ``EntityTypeScanner`` in the Java implementation, including its
 propagation of property kinds across sub-property axioms.
 """
 
+from antlr4.tree.Tree import TerminalNode
+
 from ._antlr.DLESyntaxParser import DLESyntaxParser as P
 from .vocab import is_datatype_name
 
@@ -29,6 +31,26 @@ def _predicate_ref_name(ctx):
     while ctx.name() is None:
         ctx = ctx.predicateRef()
     return _name_text(ctx.name())
+
+
+def _ofn_key_groups(ctx):
+    """Each property of a functional-syntax key, paired with its declared kind.
+
+    ANTLR flattens both parenthesised groups into one ``propertyExpr()`` list, so
+    the boundary is recovered by counting the parentheses the axiom itself opens:
+    the first belongs to HasKey, the second to the object group, the third to the
+    data group. Parentheses inside the class expression are that node's children,
+    not these, so they cannot be miscounted.
+    """
+    depth = 0
+    out = []
+    for child in ctx.children:
+        if isinstance(child, TerminalNode):
+            if child.getText() == "(":
+                depth += 1
+        elif isinstance(child, P.PropertyExprContext):
+            out.append((child, OBJECT if depth == 2 else DATA))
+    return out
 
 
 def _is_inverted(ctx):
@@ -224,6 +246,23 @@ class _Scanner:
             self._class_expr(ctx.classExpr())
             for expr in ctx.keyExpr().propertyExpr():
                 self.kinds.note_property(_property_name(expr), UNKNOWN)
+
+        elif isinstance(ctx, P.UnaryPredicateAssertionContext):
+            self.kinds.note_class(_name_text(ctx.name(0)))
+
+        elif isinstance(ctx, P.BinaryPredicateAssertionContext):
+            self.kinds.note_property(_name_text(ctx.name(0)), OBJECT)
+
+        elif isinstance(ctx, P.BinaryDataPredicateAssertionContext):
+            self.kinds.note_property(_name_text(ctx.name(0)), DATA)
+
+        elif isinstance(ctx, P.OfnHasKeyAxiomContext):
+            # The functional syntax states the object/data split itself, which
+            # makes it the strongest evidence available: a property in the data
+            # group is a data property because the document said so.
+            self._class_expr(ctx.classExpr())
+            for expr, kind in _ofn_key_groups(ctx):
+                self.kinds.note_property(_property_name(expr), kind)
 
         elif isinstance(ctx, (P.SameIndividualAxiomContext,
                               P.DifferentIndividualsAxiomContext)):
