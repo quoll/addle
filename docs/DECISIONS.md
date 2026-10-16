@@ -394,3 +394,69 @@ rather than as a fan of `r ⊓ s ⊑ ⊥` lines. That is one line for one axiom,
 what the reference writes, and it removes the per-member de-duplication the old
 path needed. Class disjointness keeps `A ⊓ B ⊑ ⊥`, which both implementations
 already agreed on.
+
+## 21. What the corpus found
+
+Running all four reference example documents through both implementations —
+reading with addle, writing, and handing the result back to `owltx` — turned up
+eight defects that no unit test reached. They needed a real document.
+
+**Three were hard failures.** A digit-initial name was written bare, which does
+not lex: `NAME` cannot begin with a digit, and `:123` is the `DEFAULT_NAME` token
+that exists for it. Every SNOMED identifier is of that shape, so two of the four
+documents produced output that could not be read. An annotation on an individual
+— `@label bob` after `bob : Person` — asked Owlready2 to change the entity's
+metaclass, which it refuses with a `TypeError` about object layouts. And a
+property named in class position, which is what a punned IRI looks like after the
+reference writes it, built a general class axiom over a property and raised an
+error about annotation properties.
+
+**Two were silent losses.** `operatorOf ≡ (operatedBy⁻)` — parenthesised — was not
+recognised as naming an inverse, so `operatorOf` became a *class* whose equivalent
+was an `Inverse` construct: a different statement from the one the document made.
+And a name the grammar reserves was written bare, where `A ⊑ ∃r.Self` comes back
+as `ObjectHasSelf` with the class gone — the document reloads and means something
+else. Both now take a prefix, which required rendering the body before the
+declarations, since minting a prefix during rendering has to happen before the
+`@prefix` lines are written.
+
+**Two were instabilities.** `annotation_properties()` yields in creation order,
+which differs between a document and its own output, so `@ann` lines moved within
+a block on every pass. And an inverse pair was written from whichever member was
+reached first, so it swapped sides. Both are now decided by IRI.
+
+**And one was a mistake of mine, corrected.** Decision 16 had the writer emit
+`A ≡ B ≡ C` as one chained line. Owlready2 keeps a flat `equivalent_to` list, so
+the chain and the pair of separate axioms `A ≡ B`, `A ≡ C` are indistinguishable
+once read — and the two have to be told apart on the way out. The reference corpus
+has four classes stating two equivalences each and none using the chain, so
+chaining merged two axioms into one, four times over. The writer now emits one
+line per equivalent. A chain still reads correctly and comes back as separate
+lines, which says the same thing in one more axiom.
+
+## 22. What still differs, and why
+
+Six axiom counts differ across the four documents, and each is understood.
+
+**Four are tautologies.** `C ⊑ ⊤` and `a : ⊤` exist so that an entity mentioned
+nowhere else still appears in the document. Owlready2 writes `rdfs:subClassOf
+owl:Thing` for *every* class and puts `owl:Thing` in *every* individual's `is_a`,
+so an explicitly stated one cannot be told from the default — this was checked
+directly, not assumed. addle writes the line when nothing else names the entity
+and omits it otherwise, which loses a `C ⊑ ⊤` that was *also* stated some other
+way. The dropped line was redundant in the document too, and ⊤ subsumption carries
+no logical content either way.
+
+**One is a duplicate.** `syntax-coverage.dle` states the irreflexivity of
+`connectsTo` twice, once as `Irref(connectsTo)` and once as `∃connectsTo.Self ⊑ ⊥`.
+OWLAPI keeps both because their annotations differ; Owlready2's `is_a` holds the
+characteristic once. Deduplicating an identical axiom is correct.
+
+**One is an Owlready2 limit.** `abox-forms.dle` asserts `(rex,7):age` and
+`(rex,-3):age` on a *functional* property. OWL keeps both and lets a reasoner
+conclude the values are equal; Owlready2 holds one value, so the second replaces
+the first. addle now says so rather than losing one quietly.
+
+**Not a count difference, but worth stating:** prefix *names* may change, per
+decision 15, and `xsd:double` returns as `xsd:decimal` because Owlready2 maps both
+to Python `float`. Neither changes an axiom.

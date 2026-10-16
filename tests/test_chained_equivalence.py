@@ -26,8 +26,16 @@ def test_nothing_is_dropped_past_the_second(parse):
     assert {c.name for c in onto.A.equivalent_to} == {"B", "C", "D"}
 
 
-def test_it_is_written_as_one_chained_line(parse):
-    assert _equiv_lines(parse(PREFIX + "A ≡ B ≡ C\n")) == ["A ≡ B ≡ C"]
+def test_a_chain_comes_back_as_separate_lines(parse):
+    """Owlready2 keeps a flat list, so the two spellings cannot be told apart.
+
+    ``A ≡ B ≡ C`` and the pair ``A ≡ B``, ``A ≡ C`` say the same thing, and once
+    read they are the same object. The separate form is written because that is
+    what documents overwhelmingly contain — the reference corpus has four
+    classes stating two equivalences each and none using the chain, and writing
+    the chain merged each of those pairs into one axiom.
+    """
+    assert _equiv_lines(parse(PREFIX + "A ≡ B ≡ C\n")) == ["A ≡ B", "A ≡ C"]
 
 
 def test_a_simple_equivalence_is_unchanged(parse):
@@ -35,7 +43,7 @@ def test_a_simple_equivalence_is_unchanged(parse):
 
 
 def test_an_expression_may_appear_in_the_chain(parse):
-    assert _equiv_lines(parse(PREFIX + "A ≡ B ⊓ C ≡ D\n")) == ["A ≡ B ⊓ C ≡ D"]
+    assert _equiv_lines(parse(PREFIX + "A ≡ B ⊓ C ≡ D\n")) == ["A ≡ B ⊓ C", "A ≡ D"]
 
 
 def test_a_chain_is_stable(parse):

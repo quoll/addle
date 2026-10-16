@@ -515,13 +515,25 @@ def _single_inverse_name(ctx):
 
 
 def _unwrap_class_expr_atom(ctx):
-    """Strip the union/intersection/primary wrappers around a lone atom."""
-    if not isinstance(ctx, P.IntersectionWrapContext):
-        return None
-    inter = ctx.intersectionExpr()
-    if not isinstance(inter, P.PrimaryWrapContext):
-        return None
-    return _unwrap_atom(inter.primary())
+    """Strip the union/intersection/primary wrappers, and parentheses, around a
+    lone atom.
+
+    Parentheses group and carry no meaning of their own, and generators emit
+    them whether or not they are needed. Not seeing through them meant
+    ``operatorOf ≡ (operatedBy⁻)`` was not recognised as naming an inverse, so
+    ``operatorOf`` became a class whose equivalent was an Inverse construct —
+    a different statement from the one the document made.
+    """
+    while True:
+        if not isinstance(ctx, P.IntersectionWrapContext):
+            return None
+        inter = ctx.intersectionExpr()
+        if not isinstance(inter, P.PrimaryWrapContext):
+            return None
+        atom = _unwrap_atom(inter.primary())
+        if not isinstance(atom, P.ParenAtomContext):
+            return atom
+        ctx = atom.classExpr()
 
 
 def _unwrap_atom(primary):
