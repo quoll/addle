@@ -17,6 +17,7 @@ from owlready2 import (
     ConstrainedDatatype,
     FunctionalProperty,
     Inverse,
+    InverseFunctionalProperty,
     IrreflexiveProperty,
     Not,
     Or,
@@ -57,6 +58,7 @@ EQUIV = "≡"
 AND = "⊓"
 OR_OP = "⊔"
 NOT = "¬"
+AT_LEAST = "≥"
 SAME = "="
 DIFFERENT = "≠"
 EXISTS = "∃"
@@ -71,14 +73,22 @@ _KEYWORD_ANNOTATIONS = [
     (DOC_IRI, "@doc"),
 ]
 
+#: Both spellings parse; these are the ones written. The reference
+#: implementation settled on the long forms because they ask less of a reader —
+#: and of a language model — than the textbook's abbreviations do.
 _CHARACTERISTIC_KEYWORDS = [
-    (TransitiveProperty, "Trans"),
-    (FunctionalProperty, "Func"),
-    (ReflexiveProperty, "Ref"),
-    (IrreflexiveProperty, "Irref"),
-    (SymmetricProperty, "Sym"),
-    (AsymmetricProperty, "Asym"),
+    (TransitiveProperty, "Transitive"),
+    (FunctionalProperty, "Functional"),
+    (ReflexiveProperty, "Reflexive"),
+    (IrreflexiveProperty, "Irreflexive"),
+    (SymmetricProperty, "Symmetric"),
+    (AsymmetricProperty, "Asymmetric"),
 ]
+
+#: InverseFunctional is Functional applied to the property's inverse, and DLe
+#: has no separate keyword for it: `Functional(r⁻)` says it, and is what the
+#: reference implementation writes for both spellings.
+_INVERSE_FUNCTIONAL_KEYWORD = "Functional"
 
 #: Python type → the datatype IRI to write for it.
 _IRI_BY_DATATYPE = {}
@@ -241,8 +251,8 @@ class Writer:
         lines.extend(self._ontology_declarations())
         lines.extend(self._predicate_definitions())
 
-        for entity in self._entities():
-            block = self._entity_block(entity)
+        blocks = [(entity, self._entity_block(entity)) for entity in self._entities()]
+        for _entity, block in self._without_redundant_existence(blocks):
             if block:
                 lines.extend(block)
                 lines.append("")
@@ -253,6 +263,38 @@ class Writer:
 
         text = "\n".join(lines)
         return text.rstrip("\n") + "\n"
+
+    def _without_redundant_existence(self, blocks):
+        """Drop a block that says only ``C ⊑ ⊤`` when something else names C.
+
+        ``C ⊑ ⊤`` exists so that a class mentioned nowhere else still appears in
+        the document. Written beside ``A ⊑ C`` it says nothing the reader does
+        not already learn, and the reference implementation omits it — so two
+        implementations rendering the same ontology produced documents that
+        could not be diffed against each other.
+
+        The test is textual, over the other blocks as rendered, because that is
+        exactly the question being asked: does this name appear anywhere else in
+        the document.
+        """
+        existence = {}
+        for index, (entity, block) in enumerate(blocks):
+            if isinstance(entity, owlready2.ThingClass) and len(block) == 1:
+                name = self.shorten(entity.iri)
+                if block[0] == "%s %s %s" % (name, SUBCLASS, TOP):
+                    existence[index] = name
+        if not existence:
+            return blocks
+
+        elsewhere = set()
+        for index, (_entity, block) in enumerate(blocks):
+            for other_index, name in existence.items():
+                if other_index == index or name in elsewhere:
+                    continue
+                if any(_names_in(line, name) for line in block):
+                    elsewhere.add(name)
+        return [(entity, [] if existence.get(index) in elsewhere else block)
+                for index, (entity, block) in enumerate(blocks)]
 
     def _ontology_declarations(self):
         lines = []
@@ -603,8 +645,18 @@ class Writer:
                 continue  # characteristics are written in their keyword form
             lines.append("%s %s %s" % (name, SUBCLASS, self.concept(parent)))
 
+        data_property = isinstance(prop, owlready2.DataPropertyClass)
         for value in getattr(prop, "domain", []) or []:
-            lines.append("%s%s.%s %s %s" % (EXISTS, name, TOP, SUBCLASS, self.concept(value)))
+            if data_property:
+                # `∃d.⊤` would put a data property where a class expression is
+                # expected: ⊤ is the top concept, and the top data range is
+                # rdfs:Literal, a different thing. DL spells a data property's
+                # domain with a cardinality bound instead.
+                lines.append("(%s1 %s) %s %s"
+                             % (AT_LEAST, name, SUBCLASS, self.concept(value)))
+            else:
+                lines.append("%s%s.%s %s %s"
+                             % (EXISTS, name, TOP, SUBCLASS, self.concept(value)))
         for value in getattr(prop, "range", []) or []:
             lines.append("%s %s %s%s.%s" % (TOP, SUBCLASS, FORALL, name, self._filler(value)))
 
@@ -619,6 +671,8 @@ class Writer:
         for characteristic, keyword in _CHARACTERISTIC_KEYWORDS:
             if characteristic in prop.is_a:
                 lines.append("%s(%s)" % (keyword, name))
+        if InverseFunctionalProperty in prop.is_a:
+            lines.append("%s(%s%s)" % (_INVERSE_FUNCTIONAL_KEYWORD, name, INVERSE))
 
         for equivalent in getattr(prop, "equivalent_to", []) or []:
             lines.append("%s %s %s" % (name, EQUIV, self.concept(equivalent)))
@@ -889,16 +943,18 @@ class Writer:
         if not facets:
             return base
 
-        if all(kwarg in COMPACT_FACETS for kwarg, _ in facets):
-            inner = (" %s " % AND).join(
-                "%s%s" % (COMPACT_FACETS[kwarg], _number(value)) for kwarg, value in facets
-            )
-            return "%s[%s]" % (base, inner)
-
+        # One bracket, whatever the facets are. A comparison facet is written
+        # with its symbol and anything else with its keyword, and the two mix
+        # freely — `xsd:integer[≥1 ⊓ totalDigits 3]`. There used to be a second
+        # shape for the keyword form, `[xsd:integer ⊓ [totalDigits 3]]`, which
+        # the grammar still reads and nothing now writes.
         inner = (" %s " % AND).join(
-            "[%s %s]" % (FACET_OUTPUT[kwarg], _literal(value)) for kwarg, value in facets
+            "%s%s" % (COMPACT_FACETS[kwarg], _number(value))
+            if kwarg in COMPACT_FACETS
+            else "%s %s" % (FACET_OUTPUT[kwarg], _literal(value))
+            for kwarg, value in facets
         )
-        return "[%s %s %s]" % (base, AND, inner)
+        return "%s[%s]" % (base, inner)
 
     # ── triple access ────────────────────────────────────────────────────────
     #
@@ -939,6 +995,15 @@ class Writer:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _names_in(line, name):
+    """Whether ``line`` mentions ``name`` as a whole name rather than a substring.
+
+    ``Cat`` must not be found inside ``Catalogue``, nor ``A`` inside ``A1``.
+    """
+    return re.search(r"(?<![A-Za-z0-9_:.-])%s(?![A-Za-z0-9_-])" % re.escape(name),
+                     line) is not None
 
 
 def _datatype_iri(value):

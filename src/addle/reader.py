@@ -703,10 +703,33 @@ class Reader:
     # ── axiom shape recognition ──────────────────────────────────────────────
 
     def _domain_shape(self, left):
-        """Role name if ``left`` is exactly ``∃p.⊤``, else None."""
+        """Role name if ``left`` is a property's domain, else None.
+
+        Two spellings, one meaning. An object property's domain is ``∃p.⊤ ⊑ C``;
+        a data property's is ``(≥1 d) ⊑ C``, because ``∃d.⊤`` would put a data
+        property where a class expression is expected — ⊤ is the top concept and
+        the top data range is rdfs:Literal, a different thing. Only the second
+        was unrecognised, so a data property's domain was read as an ordinary
+        subsumption of an anonymous cardinality class and the property kept no
+        domain at all.
+        """
         primary = _unwrap_primary(left)
         if isinstance(primary, (P.SomeValuesFromContext, P.ImplicitSomeValuesFromContext)):
             if _is_top_primary(primary.primary()):
+                expr = primary.propertyExpr()
+                if isinstance(expr, P.SimplePropertyExprContext):
+                    return expr.name().getText()
+        # The canonical spelling parenthesises the bound — `(≥1 d) ⊑ C` — so the
+        # restriction arrives wrapped in a ParenAtom and has to be unwrapped
+        # before it can be recognised.
+        while True:
+            atom = _unwrap_atom_of(primary)
+            if not isinstance(atom, P.ParenAtomContext):
+                break
+            primary = _unwrap_primary(atom.classExpr())
+        if isinstance(primary, P.UnqualifiedCardinalityRestrictionContext):
+            if (primary.cardSymbol().getText() == "≥"
+                    and primary.NUMBER().getText() == "1"):
                 expr = primary.propertyExpr()
                 if isinstance(expr, P.SimplePropertyExprContext):
                     return expr.name().getText()

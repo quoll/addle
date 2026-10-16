@@ -102,10 +102,17 @@ def test_domain_and_range_use_the_dle_idioms(world, statements):
 
 
 def test_characteristics_are_written_as_keywords(world, statements):
+    """Both spellings parse; the long one is written.
+
+    The reference implementation settled on the long forms because they ask
+    less of a reader — and of a language model — than the textbook's
+    abbreviations do, and two implementations writing different spellings of
+    the same axiom cannot be diffed against each other.
+    """
     onto = addle.loads("Trans(above)\nSym(beside)\n", world=world)
     lines = statements(onto)
-    assert "Trans(above)" in lines
-    assert "Sym(beside)" in lines
+    assert "Transitive(above)" in lines
+    assert "Symmetric(beside)" in lines
 
 
 def test_inverse_pair_is_written_once(world, statements):
@@ -139,8 +146,14 @@ def test_compact_numeric_facets(world, statements):
 
 
 def test_keyword_facets(world, statements):
+    """The legacy bracketed form is still read, and the unified one written.
+
+    ``[xsd:string ⊓ [matches "…"]]`` was a second shape for what
+    ``xsd:string[matches "…"]`` says, and the grammar keeps reading it so that
+    existing documents still load.
+    """
     onto = addle.loads('⊤ ⊑ ∀id.[xsd:string ⊓ [matches "[A-Z]{3}"]]\n', world=world)
-    assert '⊤ ⊑ ∀id.[xsd:string ⊓ [matches "[A-Z]{3}"]]' in statements(onto)
+    assert '⊤ ⊑ ∀id.xsd:string[matches "[A-Z]{3}"]' in statements(onto)
 
 
 def test_literal_enumeration(world, statements):
