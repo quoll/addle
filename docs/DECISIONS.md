@@ -294,3 +294,17 @@ would cost something in both implementations.
 and the document reads back. Only the prefix *name* may differ from the source —
 `@prefix s: <http://snomed.info/id/>` comes back as `@prefix id:`. The names are
 chosen deterministically, so a second pass changes nothing.
+
+## 16. Chained equivalence is one axiom, and every operand is read
+
+**Question.** `A ≡ B ≡ C`. The grammar gained the trailing `(EQUIV classExpr)*`
+in the resync.
+
+**Found.** The reader took `classExpr(0)` and `classExpr(1)` and nothing else, so
+`A ≡ B ≡ C` built `A ≡ B` and **dropped C in silence**. The document said one
+thing and came back saying less, with no warning.
+
+**Decided.** Relate every operand to the first, which `owl:equivalentClass` being
+symmetric and transitive makes equivalent to relating them all pairwise. Write it
+back as one chained line rather than one line per operand, matching the reference
+implementation, which produces `EquivalentClasses(A B C)` and writes `A ≡ B ≡ C`.

@@ -567,7 +567,13 @@ class Reader:
             return
 
         if isinstance(ctx, P.EquivAxiomContext):
-            self._equivalence_axiom(ctx.classExpr(0), ctx.classExpr(1))
+            # `A ≡ B ≡ C` is one axiom over all three. Only the first two were
+            # read before, so every operand past the second was dropped in
+            # silence. owl:equivalentClass is symmetric and transitive, so
+            # relating the rest to the first says all of it.
+            operands = ctx.classExpr()
+            for right in operands[1:]:
+                self._equivalence_axiom(operands[0], right)
             return
 
         self.warnings.append("unhandled axiom form: %s" % type(ctx).__name__)
