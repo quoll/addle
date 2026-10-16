@@ -225,6 +225,13 @@ class _Scanner:
             for expr in ctx.keyExpr().propertyExpr():
                 self.kinds.note_property(_property_name(expr), UNKNOWN)
 
+        elif isinstance(ctx, (P.SameIndividualAxiomContext,
+                              P.DifferentIndividualsAxiomContext)):
+            # Every name here is an individual. This pass records the kinds of
+            # names that must be one thing, and an individual is not one of
+            # those — a name can be an individual and a class at once.
+            pass
+
         elif isinstance(ctx, P.ObjectAssertionAxiomContext):
             # (a,b) : r — the value is a name, so r relates individuals.
             self.kinds.note_property(_name_text(ctx.name(2)), OBJECT)

@@ -12,6 +12,7 @@ import types
 import owlready2
 from antlr4 import Token
 from owlready2 import (
+    AllDifferent,
     AllDisjoint,
     AnnotationProperty,
     AsymmetricProperty,
@@ -477,6 +478,25 @@ class Reader:
             if len(exprs) == 3:
                 target = exprs[2]
                 target.property_chain.append(PropertyChain([exprs[0], exprs[1]]))
+            return
+
+        if isinstance(ctx, P.SameIndividualAxiomContext):
+            # `a = b = c` is one n-ary axiom, not a chain of pairs. owl:sameAs is
+            # transitive and symmetric, so linking the rest to the first says all
+            # of it without writing every pair.
+            individuals = [self.individual_for(n.getText()) for n in ctx.name()]
+            first, rest = individuals[0], individuals[1:]
+            for other in rest:
+                if other not in first.equivalent_to:
+                    first.equivalent_to.append(other)
+            return
+
+        if isinstance(ctx, P.DifferentIndividualsAxiomContext):
+            # AllDifferent, not a chain of pairwise inequalities: `x ≠ y ≠ z` says
+            # all three differ, which pairwise links would also say but in three
+            # axioms rather than one.
+            individuals = [self.individual_for(n.getText()) for n in ctx.name()]
+            AllDifferent(individuals)
             return
 
         if isinstance(ctx, P.ClassAssertionAxiomContext):

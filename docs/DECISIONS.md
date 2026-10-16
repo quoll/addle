@@ -190,3 +190,26 @@ reference implementation writes no `@ontology` for a document that declared none
 **Cost.** `test_ontology_iri_is_declared` asserted the old behaviour and was
 rewritten to assert the new one, including the case where the ontology IRI does
 differ and is still written.
+
+## 12. Identity statements are n-ary, and stay that way
+
+**Question.** `a = b = c` and `x ≠ y ≠ z`. Is each one axiom, or a chain of pairs?
+
+**Decided.** One axiom each. `a = b = c` links the rest to the first through
+Owlready2's `equivalent_to`, which is `owl:sameAs`; `x ≠ y ≠ z` becomes a single
+`AllDifferent` over all three.
+
+**Why.** It is what OWL means — `SameIndividual(a b c)` and
+`DifferentIndividuals(x y z)`, confirmed against the reference implementation's
+output for the same document. Pairwise expansion would say the same thing for
+sameness, `owl:sameAs` being transitive, but would say something *weaker* for
+difference if only adjacent pairs were linked, and would turn one axiom into three
+either way.
+
+**Placement.** The difference line is written outside any individual's block.
+Putting it under its first member would imply an order the axiom does not have,
+and the set is not about that member more than any other. Sameness is written in
+the block of the individual that holds the `equivalent_to` list.
+
+**Existence lines.** Both forms name their members, so neither adds `b : ⊤` beside
+`a = b` — the same rule as decision 10, extended to cover them.
