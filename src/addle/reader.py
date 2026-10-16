@@ -210,6 +210,14 @@ class Reader:
             self._namespaces[ns_iri] = ns
         return ns
 
+    def _names_a_type(self, name):
+        """Whether pass 1 says this name denotes a class, property or datatype."""
+        # `is_class` is a default — true for anything that is not a property, a
+        # predicate or a datatype, and so true of every individual. The question
+        # here is whether the name was actually *used* in a class position.
+        return (name in self.kinds.class_names or name in self.kinds.properties
+                or name in self.kinds.datatypes)
+
     def _new_entity(self, iri, base):
         # Owlready2 takes the target namespace from the enclosing `with` block
         # rather than a constructor argument.
@@ -235,6 +243,15 @@ class Reader:
         # before any axiom did, and it is not the entity we want — fall through
         # and declare the right kind instead.
         if existing is not None and isinstance(existing, type):
+            self._entities[name] = existing
+            return existing
+
+        if existing is not None and not self._names_a_type(name):
+            # A genuine individual, declared by an assertion earlier in the
+            # document, and pass 1 does not claim the name for a class or a
+            # property. Declaring a class over it would ask Owlready2 to change
+            # the entity's metaclass, which it refuses outright — `@label bob`
+            # after `bob : Person` was a TypeError about object layouts.
             self._entities[name] = existing
             return existing
 
@@ -712,6 +729,19 @@ class Reader:
                 cls.is_a.remove(Thing)
             return
 
+        if left_name is not None and self.kinds.is_property(left_name):
+            # The name is a property, and this says something about it in class
+            # position — `p ⊑ ⊤` beside `p ⊑ owl:topObjectProperty`, which is
+            # what a punned IRI looks like after the reference implementation
+            # writes it. Owlready2 maps one IRI to one entity, so there is no
+            # class here to subsume, and building a general class axiom over the
+            # property raises an error about annotation properties instead.
+            if target is not Thing:
+                self.warnings.append(
+                    "%s is a property, so the subsumption stated about it in class "
+                    "position cannot be represented and is dropped" % left_name)
+            return
+
         axiom = GeneralClassAxiom(self._class_expr(left), namespace=self.onto)
         axiom.is_a.append(target)
 
@@ -1060,7 +1090,7 @@ class Reader:
         cls = self._new_entity(iri, Thing)
         self._add_data_triple(iri, LABEL_IRI, expr)
         for ctx in role_ctxs:
-            self.entity_for(ctx.name().getText())
+            self.entity_for(scanner._property_name(ctx))
         return cls
 
     def _atom(self, ctx):
@@ -1294,10 +1324,33 @@ class Reader:
         """
         prop = self.entity_for(prop_ctx.getText())
         subject = self.individual_for(subject_ctx.getText())
+        if not isinstance(subject, owlready2.Thing):
+            # The subject name is already a class or a property. Owlready2 maps
+            # one IRI to one entity, so there is no individual to assert about,
+            # and setting an attribute on the class would say something else.
+            self.warnings.append(
+                "%s is already not an individual, so the assertion about it "
+                "cannot be represented and is dropped" % subject_ctx.getText())
+            return
         if isinstance(value, P.NameContext):
             value = self.individual_for(value.getText())
         name = getattr(prop, "python_name", None) or prop.name
-        getattr(subject, name).append(value)
+        current = getattr(subject, name, None)
+        if isinstance(current, list):
+            current.append(value)
+        else:
+            # A functional property holds one value rather than a list, so there
+            # is nothing to append to — Owlready2 returns the value itself, or
+            # None when there is not one yet. A second assertion therefore
+            # replaces the first, where OWL would keep both and let a reasoner
+            # conclude the two values are equal. Say so rather than lose one
+            # quietly.
+            if current is not None and current != value:
+                self.warnings.append(
+                    "%s is functional and already has the value %r, so %r replaces "
+                    "it; Owlready2 holds one value where OWL would keep both"
+                    % (prop.name, current, value))
+            setattr(subject, name, value)
 
     def _negative_assertion(self, prop_ctx, subject_ctx, target, is_object):
         """``¬(a,b) : r`` — OWL's reified negative assertion, written as raw RDF.

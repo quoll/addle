@@ -59,6 +59,11 @@ AND = "⊓"
 OR_OP = "⊔"
 NOT = "¬"
 AT_LEAST = "≥"
+
+#: Words the grammar keeps for itself, which therefore cannot be written bare.
+#: `Self` is the ObjectHasSelf filler, `true` and `false` are the boolean
+#: literals, and `key` opens a key expression. `HasKey` is reserved outright.
+RESERVED_LOCAL_NAMES = frozenset({"Self", "true", "false", "key", "HasKey"})
 SAME = "="
 DIFFERENT = "≠"
 EXISTS = "∃"
@@ -123,6 +128,8 @@ class Writer:
         self.warnings = []
         self._asserted_object_iris = None
         self._default_ns = None
+        self._default_alias = None
+        self._inverse_partner_map = None
         # Last: it reads the caches above.
         self.prefixes = self._build_prefixes(prefixes)
 
@@ -238,7 +245,33 @@ class Writer:
         local = iri[len(namespace) :]
         if not local:
             return "<%s>" % iri
-        return local if prefix == "" else "%s:%s" % (prefix, local)
+        if prefix != "":
+            return "%s:%s" % (prefix, local)
+        if local[0].isdigit():
+            # `:123` is the DEFAULT_NAME token, which exists for exactly this:
+            # NAME cannot begin with a digit, so the bare spelling does not lex.
+            # SNOMED identifiers are all of this shape.
+            return ":%s" % local
+        if local in RESERVED_LOCAL_NAMES:
+            # Bare, these are the grammar's own words. `Self` written bare as the
+            # filler of a restriction comes back as ObjectHasSelf with the class
+            # gone — the document reloads and means something else. Prefixed they
+            # are ordinary names, so the fix is to write a prefix.
+            return "%s:%s" % (self._alias_for_default_namespace(), local)
+        return local
+
+    def _alias_for_default_namespace(self):
+        """A named prefix for the default namespace, minted when first needed.
+
+        Only a name the grammar reserves needs it, and such a name is rare, so
+        the prefix is not declared unless one turns up.
+        """
+        if self._default_alias is None:
+            namespace = self.prefixes[""]
+            alias = self._coin_prefix(namespace, self.prefixes)
+            self.prefixes[alias] = namespace
+            self._default_alias = alias
+        return self._default_alias
 
     # ── document ─────────────────────────────────────────────────────────────
 
@@ -248,19 +281,24 @@ class Writer:
             lines.append(header_text().rstrip("\n"))
             lines.append("")
 
-        lines.extend(self._ontology_declarations())
-        lines.extend(self._predicate_definitions())
-
+        # The body is rendered first and the declarations are prepended, because
+        # rendering can mint a prefix: a name the grammar reserves has to be
+        # written prefixed, and the prefix it is given must be declared. Writing
+        # the declarations first emitted `ex:Self` with no `@prefix ex:` line,
+        # and the document would not read.
+        body = list(self._predicate_definitions())
         blocks = [(entity, self._entity_block(entity)) for entity in self._entities()]
         for _entity, block in self._without_redundant_existence(blocks):
             if block:
-                lines.extend(block)
-                lines.append("")
+                body.extend(block)
+                body.append("")
+        body.extend(self._disjoint_property_lines())
+        body.extend(self._different_individual_lines())
+        body.extend(self._universal_axioms())
+        body.extend(self._orphan_axioms())
 
-        lines.extend(self._disjoint_property_lines())
-        lines.extend(self._different_individual_lines())
-        lines.extend(self._universal_axioms())
-        lines.extend(self._orphan_axioms())
+        lines.extend(self._ontology_declarations())
+        lines.extend(body)
 
         text = "\n".join(lines)
         return text.rstrip("\n") + "\n"
@@ -305,10 +343,13 @@ class Writer:
         # `http://ex.org/` into `http://ex.org`, which Owlready2 reads back as
         # `http://ex.org#` — a different namespace, so the second pass could no
         # longer shorten any name.
-        if iri != self._default_namespace().rstrip("#/"):
+        version = list(self._object_values(self.onto.base_iri.rstrip("#/"),
+                                           OWL_NS + "versionIRI"))
+        # A version identifies a version *of a named ontology*, so a document
+        # declaring one must name itself — the reference refuses a @version with
+        # no @ontology, and addle was producing exactly that.
+        if version or iri != self._default_namespace().rstrip("#/"):
             lines.append("@ontology <%s>" % iri)
-
-        version = self._object_values(self.onto.base_iri.rstrip("#/"), OWL_NS + "versionIRI")
         for value in version:
             lines.append("@version <%s>" % value)
 
@@ -453,7 +494,11 @@ class Writer:
         known = {LABEL_IRI, DOC_IRI, STORAGE_IRI, DB_IRI, COMMENT_IRI,
                  INLINE_COMMENT_IRI, PREDICATE_IRI}
         lines = []
-        for prop in self.onto.annotation_properties():
+        # Sorted: Owlready2 yields these in creation order, which for a parsed
+        # document is the order names were first mentioned. That differs between
+        # a document and its own output, so the @ann lines moved about within a
+        # block on every pass and the text never settled.
+        for prop in sorted(self.onto.annotation_properties(), key=lambda p: p.iri):
             if prop.iri in known:
                 continue
             for value in self._data_values(entity.iri, prop.iri):
@@ -617,14 +662,18 @@ class Writer:
     def _class_axioms(self, cls):
         name = self.shorten(cls.iri)
         lines = []
-        equivalents = list(cls.equivalent_to)
-        if equivalents:
-            # One chained line rather than one line per operand: `A ≡ B ≡ C` is
-            # the single axiom the reader built, and it is what the reference
-            # implementation writes.
-            lines.append("%s %s %s" % (name, EQUIV,
-                                       (" %s " % EQUIV).join(self.concept(other)
-                                                             for other in equivalents)))
+        # One line per equivalent, not one chained line over all of them.
+        # Owlready2 keeps a flat `equivalent_to` list, so `A ≡ B ≡ C` and the
+        # pair of axioms `A ≡ B`, `A ≡ C` are indistinguishable once read — and
+        # the two spellings have to be told apart on the way out. The separate
+        # form is what real documents overwhelmingly contain: the reference
+        # corpus has four classes stating two equivalences each and none using
+        # the chain. Chaining them merged two axioms into one.
+        #
+        # The chained form still reads correctly; it comes back as separate
+        # lines, which says the same thing in one more axiom.
+        for other in cls.equivalent_to:
+            lines.append("%s %s %s" % (name, EQUIV, self.concept(other)))
         parents = [p for p in cls.is_a if p is not Thing]
         for parent in parents:
             lines.append("%s %s %s" % (name, SUBCLASS, self.concept(parent)))
@@ -661,9 +710,9 @@ class Writer:
         for value in getattr(prop, "range", []) or []:
             lines.append("%s %s %s%s.%s" % (TOP, SUBCLASS, FORALL, name, self._filler(value)))
 
-        inverse = getattr(prop, "inverse_property", None)
-        if inverse is not None and self._claim_inverse_pair(prop, inverse):
-            lines.append("%s %s %s%s" % (name, EQUIV, self.shorten(inverse.iri), INVERSE))
+        partner = self._inverse_partners().get(prop.iri)
+        if partner is not None and prop.iri < partner.iri:
+            lines.append("%s %s %s%s" % (name, EQUIV, self.shorten(partner.iri), INVERSE))
 
         for chain in getattr(prop, "property_chain", []) or []:
             rendered = (" %s " % CHAIN).join(self.concept(p) for p in chain.properties)
@@ -680,18 +729,26 @@ class Writer:
 
         return lines
 
-    def _claim_inverse_pair(self, prop, inverse):
-        """Whether this property should be the one to write the inverse axiom.
+    def _inverse_partners(self):
+        """Every property that has an inverse, mapped to it, from both sides.
 
-        Owlready2 records ``inverse_property`` on both members of a pair, but
-        ``p ≡ q⁻`` and ``q ≡ p⁻`` say the same thing — so only the first member
-        seen writes it.
+        ``p ≡ q⁻`` and ``q ≡ p⁻`` say the same thing, so the pair is written
+        once, from the member with the smaller IRI. That needs both members to
+        know about it: Owlready2 records ``inverse_property`` on whichever side
+        the document stated, so asking only that side meant the pair was written
+        from whichever property happened to be reached first — and entities come
+        in creation order, which differs between a document and its own output.
+        The line moved between blocks on every pass and the text never settled.
         """
-        pair = frozenset((prop.iri, inverse.iri))
-        if pair in self._inverse_pairs:
-            return False
-        self._inverse_pairs.add(pair)
-        return True
+        if self._inverse_partner_map is None:
+            partners = {}
+            for prop in self.onto.properties():
+                other = getattr(prop, "inverse_property", None)
+                if other is not None and getattr(other, "iri", None):
+                    partners[prop.iri] = other
+                    partners.setdefault(other.iri, prop)
+            self._inverse_partner_map = partners
+        return self._inverse_partner_map
 
     def _key_lines(self, cls, name):
         """``C ⊑ key(a,b)`` lines, read back from raw ``owl:hasKey`` triples."""
