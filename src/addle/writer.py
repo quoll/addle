@@ -257,6 +257,7 @@ class Writer:
                 lines.extend(block)
                 lines.append("")
 
+        lines.extend(self._disjoint_property_lines())
         lines.extend(self._different_individual_lines())
         lines.extend(self._universal_axioms())
         lines.extend(self._orphan_axioms())
@@ -677,9 +678,6 @@ class Writer:
         for equivalent in getattr(prop, "equivalent_to", []) or []:
             lines.append("%s %s %s" % (name, EQUIV, self.concept(equivalent)))
 
-        for disjoint in prop.disjoints():
-            lines.extend(self._disjoint_lines(disjoint, prop))
-
         return lines
 
     def _claim_inverse_pair(self, prop, inverse):
@@ -748,6 +746,27 @@ class Writer:
                 % (self.shorten(entity.iri), AND, self.shorten(other.iri), SUBCLASS, BOTTOM)
             )
         return lines
+
+    def _disjoint_property_lines(self):
+        """``Disj(r, s, t)`` — one line per disjoint set of properties.
+
+        Written from the ontology rather than from each property, for two
+        reasons. Owlready2 reaches a two-member set from either member but a
+        larger one from neither — ``r.disjoints()`` is empty for
+        ``Disj(r, s, t)`` — so a three-way disjointness was written nowhere at
+        all and simply disappeared. And the set is one axiom about n properties,
+        which `Disj` says directly where a fan of pairwise ``r ⊓ s ⊑ ⊥`` lines
+        only implies it.
+        """
+        lines = []
+        for group in self.onto.disjoints():
+            members = [m for m in group.entities
+                       if isinstance(m, owlready2.PropertyClass)]
+            if len(members) < 2:
+                continue
+            lines.append("Disj(%s)" % ", ".join(
+                sorted(self.shorten(m.iri) for m in members)))
+        return sorted(lines)
 
     def _different_individual_lines(self):
         """``x ≠ y ≠ z`` — one line per AllDifferent set.

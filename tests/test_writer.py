@@ -122,10 +122,18 @@ def test_inverse_pair_is_written_once(world, statements):
     assert len(inverse_lines) == 1
 
 
-def test_disjoint_pair_is_written_once(world, statements):
+def test_disjoint_properties_are_written_once(world, statements):
+    """``Disj(a, b)``, and only once.
+
+    Owlready2 reports a two-member set from either member, so writing it from
+    each property gave the pair twice. It is now written from the ontology, and
+    as `Disj` rather than as `a ⊓ b ⊑ ⊥` — which is what the reference
+    implementation writes, and what says the axiom directly when there are more
+    than two members.
+    """
     onto = addle.loads("⊤ ⊑ ∀a.Thing\n⊤ ⊑ ∀b.Thing\na ⊓ b ⊑ ⊥\n", world=world)
-    bottom_lines = [line for line in statements(onto) if "⊥" in line]
-    assert len(bottom_lines) == 1
+    disjoint_lines = [line for line in statements(onto) if line.startswith("Disj(")]
+    assert disjoint_lines == ["Disj(a, b)"]
 
 
 def test_property_chain(world, statements):

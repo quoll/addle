@@ -347,3 +347,50 @@ whole names only, so `Cat` is not found inside `Catalogue`.
 
 This is the rule already applied to individuals in decision 10, extended to
 classes.
+
+## 19. The natural idioms are translated
+
+Description logic has no notation of its own for several OWL axioms, so they are
+written as the constructions that say the same thing. The reference implementation
+translates them back, calling it a service the library provides; addle translated
+exactly one of them.
+
+| Written | Means | Was |
+|---|---|---|
+| `r ∘ r ⊑ r` | Transitive | a property chain |
+| `r ⊑ r⁻` | Symmetric | an error |
+| `r⁻ ⊑ r` | Symmetric | unrecognised |
+| `r ≡ r⁻` | Symmetric | an inverse pair pointing at itself |
+| `Disj(r, r⁻)` | Asymmetric | a disjointness with itself |
+| `⊤ ⊑ ∃r.Self` | Reflexive | a universal axiom |
+| `∃r.Self ⊑ ⊥` | Irreflexive | already translated |
+
+**The governing rule**, taken from the reference's §6.5: translate only when the
+target is canonical, the source is an eccentric way of writing it, and no
+neighbouring case is swept up. Nobody writes the degenerate chain `r ∘ r ⊑ r`
+meaning a chain, or relates a property to its own inverse meaning a sub-property
+axiom. Every boundary is tested — `r ∘ s ⊑ t`, `r ∘ r ⊑ s`, `r ⊑ s⁻`, `r ≡ s⁻`,
+`Disj(r, s)` and `⊤ ⊑ ∃r.C` are all left exactly as they are.
+
+**Two defects found by testing the boundaries rather than the translations.**
+
+`r ⊑ s⁻` — a sub-property axiom whose super-property is an inverse — raised
+`'_set_ontology' annotation property is not defined`, because only a bare name was
+handled and the inverse form fell through to the class path. `r ⊑ r` raised an
+inheritance-cycle error from Owlready2; it is vacuous, and is now dropped.
+
+## 20. Property disjointness is written from the ontology, as `Disj`
+
+**Found while testing the asymmetry boundary.** `Disj(r, s, t)` was read correctly
+and then **written nowhere at all** — it vanished.
+
+Owlready2 reaches a two-member disjoint set from either member, but a larger one
+from neither: `r.disjoints()` is empty for a three-way set, though
+`onto.disjoints()` has it. The writer iterated the members, so anything beyond a
+pair was lost in silence.
+
+**Decided.** Write property disjointness from the ontology, as `Disj(r, s, t)`
+rather than as a fan of `r ⊓ s ⊑ ⊥` lines. That is one line for one axiom, it is
+what the reference writes, and it removes the per-member de-duplication the old
+path needed. Class disjointness keeps `A ⊓ B ⊑ ⊥`, which both implementations
+already agreed on.
