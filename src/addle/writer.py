@@ -8,6 +8,7 @@ are suppressed; their content resurfaces wherever they are referenced.
 """
 
 import datetime
+import re
 from importlib import resources
 
 import owlready2
@@ -127,9 +128,61 @@ class Writer:
         # bare <http://…> IRI — which is not a name in the grammar, so the
         # document could not be read back at all.
         prefixes[""] = self._default_namespace()
+        for namespace in self._unprefixed_namespaces(prefixes):
+            prefixes[self._coin_prefix(namespace, prefixes)] = namespace
         if extra:
             prefixes.update(extra)
         return prefixes
+
+    def _unprefixed_namespaces(self, prefixes):
+        """Namespaces the document's own entities use that nothing can shorten.
+
+        Owlready2 does not record the prefix names a document declared, so a
+        ``@prefix mm:`` is gone by the time the writer runs. Without a prefix for
+        it every name in that namespace is written as a bare ``<http://…>`` IRI
+        — which is not a ``name`` in the grammar, so the output cannot be read
+        back at all. A coined prefix is cosmetic; an unreadable document is not.
+        """
+        known = set(prefixes.values())
+        found = []
+        for entity in self._entities():
+            iri = getattr(entity, "iri", None)
+            if not iri:
+                continue
+            namespace = split_iri(iri)[0]
+            if namespace and namespace not in known and namespace not in found:
+                found.append(namespace)
+        return found
+
+    @staticmethod
+    def _coin_prefix(namespace, taken):
+        """A short, readable prefix for a namespace that arrived without one.
+
+        The last meaningful path segment, else the first label of the host:
+        ``http://mm.org/`` becomes ``mm``, ``http://ex.org/model/`` becomes
+        ``model``. Names are only a convenience, so a collision simply counts up
+        rather than trying to be clever about it.
+        """
+        body = re.sub(r"^[a-z][a-z0-9+.-]*://", "", namespace.rstrip("#/"))
+        parts = [part for part in re.split(r"[/#]", body) if part]
+        candidate = ""
+        # Past the host, newest first: the last path segment names the vocabulary
+        # where one exists — http://ex.org/model/ is `model`.
+        for part in reversed(parts[1:]):
+            cleaned = re.sub(r"[^A-Za-z0-9_-]", "", part)
+            if cleaned and not cleaned[0].isdigit():
+                candidate = cleaned
+                break
+        if not candidate and parts:
+            # Nothing but a host, so its first label: http://mm.org/ is `mm`.
+            candidate = re.sub(r"[^A-Za-z0-9_-]", "", parts[0].split(".")[0])
+        if not candidate or candidate[0].isdigit():
+            candidate = "ns"
+        name, n = candidate, 1
+        while name in taken:
+            n += 1
+            name = "%s%d" % (candidate, n)
+        return name
 
     def _default_namespace(self):
         """The namespace the document's own entities are in.
