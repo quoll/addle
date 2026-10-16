@@ -264,3 +264,33 @@ was never written. Silence plus a wrong axiom is worse than a gap plus a warning
 read by addle, while the reference keeps them. The warning says so, per statement.
 Anyone round-tripping such a document through addle should expect the difference;
 there is no way to avoid it short of Owlready2 gaining punning support.
+
+## 15. Prefixes are coined, not recovered
+
+**Question.** A pre-existing defect, confirmed on `main` before this work: a
+document declaring `@prefix mm: <http://mm.org/>` came back with bare
+`<http://mm.org/id>` IRIs. A bare IRI is not a `name` in the grammar, so the
+output could not be read at all.
+
+**Cause.** Owlready2 records namespaces but not the prefix *names* a document
+declared, so they are gone by the time the writer runs. The writer knew only the
+implicit prefixes and the default one.
+
+**Decided.** The writer coins a prefix for every namespace its entities use that
+nothing already shortens: the last meaningful path segment, else the first label
+of the host. `http://mm.org/` becomes `mm`, `http://ex.org/model/` becomes
+`model`, `http://snomed.info/id/` becomes `id`. Collisions count up —
+`model`, `model2`.
+
+**Why not store the original names.** They could be written into the quadstore as
+a `dle:` annotation, the way comments are. But `vocab.py` is a wire format shared
+with the reference implementation, which carries prefixes natively in its
+`PrefixDocumentFormat` and has no need of such an annotation — it would read it as
+an ordinary annotation and write it back as `@ann` noise in every document. A
+coined name is cosmetic and costs nothing outside addle; a new shared annotation
+would cost something in both implementations.
+
+**What is and is not preserved.** The IRIs are exact, so the axioms are identical
+and the document reads back. Only the prefix *name* may differ from the source —
+`@prefix s: <http://snomed.info/id/>` comes back as `@prefix id:`. The names are
+chosen deterministically, so a second pass changes nothing.
