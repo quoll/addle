@@ -31,6 +31,8 @@ from owlready2.base import EXACTLY, HAS_SELF, MAX, MIN, ONLY, SOME, VALUE
 from owlready2.class_construct import LogicalClassConstruct
 
 from .vocab import (
+    RDF_NS,
+    split_iri,
     COMMENT_IRI,
     COMPACT_FACETS,
     DB_IRI,
@@ -102,23 +104,53 @@ class Writer:
         self.onto = onto
         self.world = onto.world
         self.include_header = include_header
-        self.prefixes = self._build_prefixes(prefixes)
         self._labels = {}   # dle: synthetic class IRI -> its expression text
         self._inverse_pairs = set()
         self._disjoint_pairs = set()
         self.warnings = []
+        self._asserted_object_iris = None
+        self._default_ns = None
+        # Last: it reads the caches above.
+        self.prefixes = self._build_prefixes(prefixes)
 
     # ── prefixes ─────────────────────────────────────────────────────────────
 
     def _build_prefixes(self, extra):
         """Prefix map used to shorten IRIs, longest namespace first on output."""
         prefixes = dict(IMPLICIT_PREFIXES)
-        # The ontology's own base IRI becomes the default prefix, which is what
-        # makes a round-tripped document use bare names again.
-        prefixes[""] = self.onto.base_iri
+        # The default prefix is the namespace the document's own entities live
+        # in, which is usually the ontology's base IRI and occasionally is not.
+        # Using base_iri regardless meant that an ontology IRI differing from the
+        # entities' namespace shortened nothing, and every name was written as a
+        # bare <http://…> IRI — which is not a name in the grammar, so the
+        # document could not be read back at all.
+        prefixes[""] = self._default_namespace()
         if extra:
             prefixes.update(extra)
         return prefixes
+
+    def _default_namespace(self):
+        """The namespace the document's own entities are in.
+
+        The ontology's base IRI is the usual answer and the one to prefer when
+        it fits anything. When it does not — an ontology IRI naming the document
+        rather than its vocabulary — the namespace shared by most entities is
+        what a reader needs declared, since that is what makes their names bare.
+        """
+        if self._default_ns is None:
+            base = self.onto.base_iri
+            counts = {}
+            for entity in self._entities():
+                iri = getattr(entity, "iri", None)
+                if not iri:
+                    continue
+                namespace = split_iri(iri)[0]
+                counts[namespace] = counts.get(namespace, 0) + 1
+            if counts.get(base) or not counts:
+                self._default_ns = base
+            else:
+                self._default_ns = max(sorted(counts), key=counts.get)
+        return self._default_ns
 
     def _declared_prefixes(self):
         """Prefixes that need an explicit ``@prefix`` line."""
@@ -169,7 +201,13 @@ class Writer:
     def _ontology_declarations(self):
         lines = []
         iri = self.onto.base_iri.rstrip("#/")
-        lines.append("@ontology <%s>" % iri)
+        # Only when it says something the default prefix does not. Writing it
+        # unconditionally was also lossy: stripping the trailing separator turns
+        # `http://ex.org/` into `http://ex.org`, which Owlready2 reads back as
+        # `http://ex.org#` — a different namespace, so the second pass could no
+        # longer shorten any name.
+        if iri != self._default_namespace().rstrip("#/"):
+            lines.append("@ontology <%s>" % iri)
 
         version = self._object_values(self.onto.base_iri.rstrip("#/"), OWL_NS + "versionIRI")
         for value in version:
@@ -333,7 +371,128 @@ class Writer:
             return self._class_axioms(entity)
         if isinstance(entity, owlready2.PropertyClass):
             return self._property_axioms(entity)
+        if isinstance(entity, owlready2.Thing):
+            return self._individual_axioms(entity)
         return []
+
+    def _individual_axioms(self, individual):
+        """``a : C`` and the property assertions ``a`` is the subject of.
+
+        ``owl:Thing`` is skipped: Owlready2 gives every new individual Thing in
+        its ``is_a``, so writing it would put ``a : ⊤`` in every document that
+        names an individual at all, saying nothing.
+        """
+        name = self.shorten(individual.iri)
+        lines = []
+        for cls in individual.is_a:
+            if cls is Thing:
+                continue
+            lines.append("%s : %s" % (name, self.concept(cls)))
+        lines.extend(self._assertion_lines(individual, name))
+        lines.extend(self._negative_assertion_lines(individual, name))
+        if not lines and not self._is_external(individual) \
+                and individual.iri not in self._asserted_objects():
+            # Nothing else in the document names this individual, so without a
+            # line of its own it would vanish. An individual that is the subject
+            # or the object of an assertion is already named by that assertion,
+            # and `b : ⊤` beside `(a,b) : r` tells the reader nothing new — which
+            # is the rule the reference implementation follows.
+            lines.append("%s : %s" % (name, TOP))
+        return lines
+
+    def _asserted_objects(self):
+        """Every individual that is the object of some object-property assertion.
+
+        Computed once: each individual's block would otherwise re-scan every
+        assertion in the document, which is quadratic in the number of them.
+        """
+        if self._asserted_object_iris is None:
+            found = set()
+            # Negative assertions name their target too: `¬(a,b) : r` is as much
+            # a mention of b as `(a,b) : r` is.
+            w = self.world
+            for bnode, _, _ in w._get_obj_triples_spo_spo(
+                    None, w._abbreviate(RDF_NS + "type"),
+                    w._abbreviate(OWL_NS + "NegativePropertyAssertion")):
+                for predicate in (OWL_NS + "sourceIndividual", OWL_NS + "targetIndividual"):
+                    entity = self._one_object(bnode, w._abbreviate(predicate))
+                    if entity is not None and getattr(entity, "iri", None):
+                        found.add(entity.iri)
+            for prop in self.onto.object_properties():
+                for subject in self.onto.individuals():
+                    for value in self._values_of(subject, prop):
+                        iri = getattr(value, "iri", None)
+                        if iri is not None:
+                            found.add(iri)
+            self._asserted_object_iris = found
+        return self._asserted_object_iris
+
+    def _assertion_lines(self, individual, name):
+        """``(a,b) : r`` and ``(a,"x") : d`` for every assertion ``a`` makes."""
+        lines = []
+        for prop in sorted(self.onto.object_properties(), key=lambda p: p.iri):
+            for value in self._values_of(individual, prop):
+                if getattr(value, "iri", None) is None:
+                    continue
+                lines.append("(%s,%s) : %s"
+                             % (name, self.shorten(value.iri), self.shorten(prop.iri)))
+        for prop in sorted(self.onto.data_properties(), key=lambda p: p.iri):
+            for value in self._values_of(individual, prop):
+                lines.append("(%s,%s) : %s"
+                             % (name, self._annotation_literal(value),
+                                self.shorten(prop.iri)))
+        return lines
+
+    def _negative_assertion_lines(self, individual, name):
+        """``¬(a,b) : r`` — OWL's reified negative assertions, read back as RDF.
+
+        Owlready2 has no model for them, so they were written as triples and are
+        read back the same way, exactly as keys are.
+        """
+        w = self.world
+        type_of = w._abbreviate(RDF_NS + "type")
+        npa = w._abbreviate(OWL_NS + "NegativePropertyAssertion")
+        source = w._abbreviate(OWL_NS + "sourceIndividual")
+        on_prop = w._abbreviate(OWL_NS + "assertionProperty")
+        target_ind = w._abbreviate(OWL_NS + "targetIndividual")
+        target_val = w._abbreviate(OWL_NS + "targetValue")
+
+        lines = []
+        for bnode, _, _ in w._get_obj_triples_spo_spo(None, type_of, npa):
+            subject = self._one_object(bnode, source)
+            if subject is None or subject.iri != individual.iri:
+                continue
+            prop = self._one_object(bnode, on_prop)
+            if prop is None:
+                continue
+            value = self._one_object(bnode, target_ind)
+            if value is not None:
+                rendered = self.shorten(value.iri)
+            else:
+                literal = w._get_data_triple_sp_od(bnode, target_val)
+                if literal is None:
+                    continue
+                rendered = self._annotation_literal(w._to_python(*literal[:2]))
+            lines.append("%s(%s,%s) : %s"
+                         % (NOT, name, rendered, self.shorten(prop.iri)))
+        return sorted(lines)
+
+    def _one_object(self, subject_storid, predicate_storid):
+        """The single entity a blank node points at, or None."""
+        for _, _, obj in self.world._get_obj_triples_spo_spo(
+                subject_storid, predicate_storid, None):
+            return self.world._get_by_storid(obj)
+        return None
+
+    def _values_of(self, individual, prop):
+        """What ``individual`` asserts for ``prop``, or nothing."""
+        try:
+            values = getattr(individual, prop.python_name)
+        except AttributeError:
+            return []
+        if values is None:
+            return []
+        return list(values) if isinstance(values, list) else [values]
 
     def _class_axioms(self, cls):
         name = self.shorten(cls.iri)

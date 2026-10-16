@@ -3,7 +3,7 @@
 import types
 
 import pytest
-from owlready2 import DataProperty, ObjectProperty, Thing
+from owlready2 import DataProperty, ObjectProperty, Thing, World
 
 import addle
 from addle.vocab import DLE_NS
@@ -19,9 +19,24 @@ def test_header_can_be_omitted(world, render):
     assert not render(onto).startswith("#")
 
 
-def test_ontology_iri_is_declared(world, render):
-    onto = addle.loads("@prefix : <http://example.org/o#>\nAnimal ⊑ ⊤\n", world=world)
-    assert "@ontology <http://example.org/o>" in render(onto)
+def test_ontology_iri_is_declared_when_it_says_something_new(world, render):
+    """Only when it differs from the default prefix.
+
+    Writing it unconditionally was lossy: the line is built by stripping the
+    base IRI's trailing separator, so `http://example.org/o#` went out as
+    `http://example.org/o`, which Owlready2 reads back as a different namespace.
+    The second pass could then shorten no name and wrote every one as a bare
+    `<http://…>` IRI, which is not a name in the grammar — so the document could
+    not be read a third time.
+    """
+    same = addle.loads("@prefix : <http://example.org/o#>\nAnimal ⊑ ⊤\n", world=world)
+    assert "@ontology" not in render(same)
+
+    other = addle.loads(
+        "@prefix : <http://example.org/names#>\n"
+        "@ontology <http://other.org/o>\nAnimal ⊑ ⊤\n",
+        world=World())
+    assert "@ontology <http://other.org/o>" in render(other)
 
 
 def test_default_prefix_is_declared_so_bare_names_resolve(world, render):
@@ -208,8 +223,7 @@ def test_output_is_independent_of_construction_order(world):
     onto_a = addle.loads("Animal ⊑ ⊤\nPlant ⊑ ⊤\n", world=world)
     text_a = addle.dumps(onto_a, include_header=False)
 
-    from owlready2 import World
-
+    
     other = World(filename=":memory:")
     onto_b = addle.loads("Plant ⊑ ⊤\nAnimal ⊑ ⊤\n", world=other)
     text_b = addle.dumps(onto_b, include_header=False)

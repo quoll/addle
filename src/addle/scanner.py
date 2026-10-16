@@ -225,6 +225,36 @@ class _Scanner:
             for expr in ctx.keyExpr().propertyExpr():
                 self.kinds.note_property(_property_name(expr), UNKNOWN)
 
+        elif isinstance(ctx, P.ObjectAssertionAxiomContext):
+            # (a,b) : r — the value is a name, so r relates individuals.
+            self.kinds.note_property(_name_text(ctx.name(2)), OBJECT)
+
+        elif isinstance(ctx, P.DataAssertionAxiomContext):
+            # (a,"x") : d — the value is a literal, so d is a data property.
+            self.kinds.note_property(_name_text(ctx.name(1)), DATA)
+
+        elif isinstance(ctx, P.NegativeObjectAssertionAxiomContext):
+            self.kinds.note_property(_name_text(ctx.name(2)), OBJECT)
+
+        elif isinstance(ctx, P.NegativeDataAssertionAxiomContext):
+            self.kinds.note_property(_name_text(ctx.name(1)), DATA)
+
+        elif isinstance(ctx, P.ClassAssertionAxiomContext):
+            # Whichever way the individual/class split resolves, the right-hand
+            # side is a class. The individual is not recorded: a name can be an
+            # individual and a class at once, and this pass decides kinds for
+            # names that must be one thing.
+            name = _single_bare_name(ctx.classExpr())
+            if name is not None:
+                self.kinds.note_class(name)
+            self._class_expr(ctx.classExpr())
+
+        elif isinstance(ctx, P.PrefixedClassAssertionAxiomContext):
+            text = _name_text(ctx.PREFIXED_NAME())
+            local = text.partition(":")[2]
+            if local:
+                self.kinds.note_class(local)
+
         elif isinstance(ctx, P.SubPropertyChainAxiomContext):
             self._chain(ctx.chainExpr())
             self.kinds.note_property(_property_name(ctx.propertyExpr()), OBJECT)

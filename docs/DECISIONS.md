@@ -117,3 +117,76 @@ the string form.
 **Why.** The grammar change exists because models reach for quotes as often as for
 brackets. An IRI has no escapes to process, so processing them would only
 introduce a way to corrupt one.
+
+## 8. Negative assertions are written as raw RDF
+
+**Question.** `¬(a,b) : r`. Owlready2 has no model for a negative property
+assertion — nothing in its API represents one.
+
+**Decided.** Write OWL's reified form directly as triples: a blank node typed
+`owl:NegativePropertyAssertion`, with `owl:sourceIndividual`,
+`owl:assertionProperty`, and `owl:targetIndividual` or `owl:targetValue`. Read it
+back the same way.
+
+**Why.** This is the course addle already takes for `owl:hasKey`, for the same
+reason and in the same words: "Owlready2 has no model for key axioms, so they are
+written as raw RDF. That keeps them in the quadstore — reasoners and other
+serialisers see them — even though no Owlready2 accessor exposes them." Following
+an existing decision beats inventing a second policy for the same situation.
+
+**Consequence.** `a.knows` does not show a negative assertion, and should not: the
+document says the relation does *not* hold.
+
+## 9. Positive assertions go through Owlready2's API, not raw triples
+
+**Question.** `(a,b) : r` could be written as a triple too, which would be
+symmetric with the negative case.
+
+**Decided.** Use `getattr(subject, prop.python_name).append(value)`.
+
+**Why.** Owlready2 *does* model these, and a raw triple would be invisible to
+`a.r` until the world was reloaded. The asymmetry with the negative form is the
+point: write through the model where there is one, and around it only where there
+is not.
+
+## 10. An individual gets a type line only when nothing else names it
+
+**Question.** Owlready2 puts `owl:Thing` in every individual's `is_a`, so there is
+no way to tell an asserted `a : ⊤` from a default one.
+
+**Decided.** Write a line for each class assertion other than `owl:Thing`, and
+fall back to `a : ⊤` only when the individual's block is otherwise empty *and* it
+is named nowhere else in the document.
+
+**Why.** It reproduces the reference implementation's output exactly, which was
+checked against it: `lonely : ⊤` survives because nothing else mentions it, while
+`b` in `(a,b) : knows` gets no line because that assertion already names it.
+Without the fallback a lone individual vanishes; with it applied unconditionally
+every document grows a line of noise per individual.
+
+## 11. The default prefix is where the entities are, not the ontology's base IRI
+
+**Question.** A pre-existing defect, found while testing assertion idempotence and
+confirmed present before this work: round-tripping a document twice produced
+output that **could not be parsed**.
+
+**Cause.** The writer declared `@ontology` from `base_iri.rstrip("#/")`, so
+`http://ex.org/` went out as `http://ex.org`. Owlready2 reads that back as
+`http://ex.org#` — a different namespace. The writer's default prefix was taken
+from `base_iri`, which then matched no entity, so every name was written as a bare
+`<http://…>` IRI. A bare IRI is not a `name` in the grammar, so the third pass
+failed to parse at all.
+
+**Decided.** Two changes. The default prefix is the namespace the entities are
+actually in, falling back to `base_iri` when that fits anything. `@ontology` is
+written only when it says something the default prefix does not.
+
+**Why.** The ontology's IRI and the namespace its vocabulary lives in are
+different things that Owlready2 happens to store in one field. Declaring a prefix
+that shortens nothing is useless, and re-emitting an `@ontology` the source never
+had is both noise and — because the derivation is lossy — the bug itself. The
+reference implementation writes no `@ontology` for a document that declared none.
+
+**Cost.** `test_ontology_iri_is_declared` asserted the old behaviour and was
+rewritten to assert the new one, including the case where the ontology IRI does
+differ and is still written.
