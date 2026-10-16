@@ -4,6 +4,8 @@ Both are n-ary in OWL — ``SameIndividual(a b c)`` is one axiom about three
 individuals, not three axioms about pairs — and both are written back that way.
 """
 
+from owlready2 import World
+
 import addle
 
 PREFIX = "@prefix : <http://ex.org/>\n"
@@ -63,6 +65,13 @@ def test_a_lone_individual_is_still_kept(parse, render):
 
 
 def test_identity_statements_are_stable(parse, render):
+    """Re-read into a world of its own.
+
+    ``addle.loads`` with no world builds in Owlready2's default world, which
+    every other test using it shares. Two such tests then read each other's
+    entities, and which document comes back depends on the order pytest ran
+    them in — these two were passing only by luck of ordering.
+    """
     source = PREFIX + "a = b = c\nx ≠ y ≠ z\nlonely : ⊤\n"
     first = render(parse(source))
-    assert first == render(addle.loads(first))
+    assert first == render(addle.loads(first, world=World()))
