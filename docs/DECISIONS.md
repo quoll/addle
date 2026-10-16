@@ -308,3 +308,42 @@ thing and came back saying less, with no warning.
 symmetric and transitive makes equivalent to relating them all pairwise. Write it
 back as one chained line rather than one line per operand, matching the reference
 implementation, which produces `EquivalentClasses(A B C)` and writes `A ≡ B ≡ C`.
+
+## 17. The writer's spellings are the reference's spellings
+
+Four divergences, each measured against `owltx` on the same document rather than
+assumed. Two implementations of one language that render an ontology differently
+cannot be diffed against each other, and a difference in spelling is
+indistinguishable from a difference in meaning until someone checks by hand.
+
+**The long keyword forms.** `Transitive(r)`, not `Trans(r)`; likewise
+`Functional`, `Reflexive`, `Irreflexive`, `Symmetric`, `Asymmetric`. Both parse;
+the long ones are written, as the reference settled on them for asking less of a
+reader — and of a language model — than the textbook's abbreviations.
+
+**`Functional(r⁻)` for inverse-functional.** DLe has no separate keyword, and
+addle wrote *nothing at all* for `InverseFunctionalProperty`, so the axiom was
+silently lost on output.
+
+**`(≥1 d) ⊑ C` for a data property's domain.** `∃d.⊤` would put a data property
+where a class expression is expected: ⊤ is the top concept and the top data range
+is `rdfs:Literal`, a different thing. The reader did not recognise the form
+either, so a data property's domain was read as an ordinary subsumption of an
+anonymous cardinality class and the property kept no domain at all. Only a bound
+of exactly 1 is a domain; `(≥2 d) ⊑ C` stays a cardinality axiom.
+
+**One facet bracket.** `xsd:integer[≥1 ⊓ totalDigits 3]`, not
+`[xsd:integer ⊓ [min 1] ⊓ [totalDigits 3]]`. The legacy shape is still read.
+
+## 18. An existence line is written only when nothing else names the class
+
+`C ⊑ ⊤` exists so that a class mentioned nowhere else still appears. Beside
+`A ⊑ C` it says nothing the reader does not already learn, and the reference omits
+it — so the same ontology produced two documents that could not be diffed.
+
+The test is textual, over the other blocks as rendered, because that is exactly
+the question: does this name appear anywhere else in the document. It matches
+whole names only, so `Cat` is not found inside `Catalogue`.
+
+This is the rule already applied to individuals in decision 10, extended to
+classes.
