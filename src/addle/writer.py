@@ -281,14 +281,35 @@ class Writer:
             if value == name:
                 lines.append("@db %s" % name)
             else:
-                lines.append('@db %s "%s"' % (name, _escape(value)))
+                lines.append("@db %s %s" % (name, self._annotation_literal(value)))
 
         for iri, keyword in _KEYWORD_ANNOTATIONS:
             for value in self._data_values(entity.iri, iri):
-                lines.append('%s %s "%s"' % (keyword, name, _escape(value)))
+                lines.append("%s %s %s"
+                             % (keyword, name, self._annotation_literal(value)))
 
         lines.extend(self._other_annotation_lines(entity, name))
         return lines
+
+    def _annotation_literal(self, value):
+        """An annotation value as DLe writes it: a quoted string, tagged or typed.
+
+        The grammar admits only a string here, so a value that is not one has to
+        carry its datatype explicitly or it comes back as text: ``@label A "3"``
+        reads as the string "3", losing the integer it was written from. A
+        language tag is written for the same reason — Owlready2's ``locstr``
+        carries one, and dropping it changes the literal.
+
+        xsd:string is left implicit, being what an untagged, untyped string
+        already means.
+        """
+        lang = getattr(value, "lang", None)
+        if lang:
+            return '"%s"@%s' % (_escape(value), lang)
+        iri = _datatype_iri(value)
+        if iri is None or iri == XSD_NS + "string":
+            return '"%s"' % _escape(value)
+        return '"%s"^^%s' % (_escape(_lexical(value)), self.shorten(iri))
 
     def _other_annotation_lines(self, entity, name):
         """``@ann`` lines for annotation properties without a DLe keyword."""
@@ -299,8 +320,9 @@ class Writer:
             if prop.iri in known:
                 continue
             for value in self._data_values(entity.iri, prop.iri):
-                lines.append('@ann %s %s "%s"'
-                             % (name, self.shorten(prop.iri), _escape(value)))
+                lines.append("@ann %s %s %s"
+                             % (name, self.shorten(prop.iri),
+                                self._annotation_literal(value)))
             for value in self._object_values(entity.iri, prop.iri):
                 lines.append("@ann %s %s %s"
                              % (name, self.shorten(prop.iri), self.shorten(value)))
@@ -383,9 +405,33 @@ class Writer:
         lines = []
         for _, _, bnode in self.world._get_obj_triples_spo_spo(cls.storid, has_key, None):
             keys = self.onto._parse_list(bnode)
-            rendered = ",".join(self.shorten(k.iri) for k in keys)
-            lines.append("%s %s key(%s)" % (name, SUBCLASS, rendered))
+            rendered = [self._key_member(k) for k in keys]
+            if any(part is None for part in rendered):
+                self.warnings.append(
+                    "a key on %s names something that is not a property; it is omitted"
+                    % name)
+                continue
+            lines.append("%s %s key(%s)" % (name, SUBCLASS, ",".join(rendered)))
         return lines
+
+    def _key_member(self, member):
+        """One member of a key: a property, or an inverse of one.
+
+        OWL allows any object property expression in a key, so ``key(r⁻)`` is
+        legal and has to come back out as it went in. Anything else — a member
+        that did not resolve — returns None so the caller can say so rather than
+        raise, a malformed key being the document's problem and not a reason to
+        abandon the whole file.
+        """
+        if member is None:
+            return None
+        iri = getattr(member, "iri", None)
+        if iri is not None:
+            return self.shorten(iri)
+        prop = getattr(member, "property", None)
+        if prop is not None and getattr(prop, "iri", None) is not None:
+            return self.shorten(prop.iri) + INVERSE
+        return None
 
     def _disjoint_lines(self, disjoint, entity):
         """``A ⊓ B ⊑ ⊥`` lines for one member of a disjoint set.
@@ -635,6 +681,25 @@ class Writer:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _datatype_iri(value):
+    """The datatype IRI Owlready2 would give this Python value, or None."""
+    import owlready2.base as base
+
+    abbrev = base._universal_datatype_2_abbrev.get(type(value))
+    if abbrev is None:
+        return None
+    return base._universal_abbrev_2_iri.get(abbrev)
+
+
+def _lexical(value):
+    """The lexical form of a typed value, as RDF spells it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (datetime.date, datetime.datetime, datetime.time)):
+        return value.isoformat()
+    return str(value)
 
 
 def _escape(text):
