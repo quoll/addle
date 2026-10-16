@@ -256,13 +256,17 @@ class Reader:
         existing = self.world[iri]
         if existing is not None:
             if not isinstance(existing, owlready2.Thing):
-                # OWL allows an IRI to be both a property and an individual;
-                # Owlready2 maps one IRI to one entity, so the pun cannot be
-                # represented. Report it rather than silently mangling it.
+                # OWL allows an IRI to name both a class (or a property) and an
+                # individual; Owlready2 maps one IRI to one entity, so the pun
+                # cannot be represented. Report it rather than silently mangling
+                # it, and name which kinds collided — the two cases differ in
+                # what the caller can do about it.
+                other = ("a class" if isinstance(existing, owlready2.ThingClass)
+                         else "a property")
                 self.warnings.append(
-                    "%s is used both as a property and as an individual; "
-                    "Owlready2 cannot represent this punning, so the individual "
-                    "reference reuses the property entity" % name
+                    "%s is used both as %s and as an individual; Owlready2 cannot "
+                    "represent this punning, so the individual reference reuses "
+                    "the existing entity" % (name, other)
                 )
             return existing
         ns_iri, local = split_iri(iri)
@@ -478,6 +482,25 @@ class Reader:
             if len(exprs) == 3:
                 target = exprs[2]
                 target.property_chain.append(PropertyChain([exprs[0], exprs[1]]))
+            return
+
+        if isinstance(ctx, P.UnaryPredicateAssertionContext):
+            # C(a) — the same statement as `a : C`, in the spelling first-order
+            # logic uses and language models reach for unprompted.
+            self._assert_named_class(ctx.name(1).getText(), ctx.name(0).getText())
+            return
+
+        if isinstance(ctx, P.BinaryPredicateAssertionContext):
+            self._assert_property(ctx.name(0), ctx.name(1), ctx.name(2))
+            return
+
+        if isinstance(ctx, P.BinaryDataPredicateAssertionContext):
+            self._assert_property(ctx.name(0), ctx.name(1),
+                                  self._literal_value(ctx.literal()))
+            return
+
+        if isinstance(ctx, P.OfnHasKeyAxiomContext):
+            self._ofn_has_key(ctx)
             return
 
         if isinstance(ctx, P.SameIndividualAxiomContext):
@@ -1099,6 +1122,11 @@ class Reader:
             return
         # A complex class expression on the right: the individual belongs to it.
         individual = self.individual_for(first)
+        if not isinstance(individual, owlready2.Thing):
+            self.warnings.append(
+                "%s is already not an individual, so the class assertion on it "
+                "cannot be represented and is dropped" % first)
+            return
         individual.is_a.append(self._class_expr(ctx.classExpr()))
 
     def _assert_named_class(self, individual_name, class_name):
@@ -1108,6 +1136,17 @@ class Reader:
                 "expected a class expression here, but found the datatype %s"
                 % class_name)
         individual = self.individual_for(individual_name)
+        if not isinstance(individual, owlready2.Thing):
+            # The name is already a class or a property here. Appending to its
+            # `is_a` would make this a subsumption — `Person ⊑ ComponentType`
+            # where the document said `ComponentType(Person)` — which is a
+            # different axiom, not a lossy version of the right one. The
+            # assertion is dropped and said to be dropped.
+            self.warnings.append(
+                "%s is already not an individual, so the assertion %s(%s) cannot be "
+                "represented and is dropped" % (individual_name, class_name,
+                                                individual_name))
+            return
         cls = self.entity_for(class_name)
         if cls not in individual.is_a:
             individual.is_a.append(cls)
@@ -1152,6 +1191,21 @@ class Reader:
             obj, datatype = self.onto._to_rdf(target)
             self.onto._add_data_triple_spod(
                 bnode, self._storid(OWL_NS + "targetValue"), obj, datatype)
+
+    def _ofn_has_key(self, ctx):
+        """``HasKey(C (r) (d))`` — a key in OWL functional syntax.
+
+        Object properties first, then data properties, either group possibly
+        empty. Unlike ``C ⊑ key(...)``, which carries one flat list and leaves
+        the kinds to be inferred, this form states the split itself, so it is
+        taken at its word.
+        """
+        name = scanner._single_bare_name(ctx.classExpr())
+        if name is None:
+            self.warnings.append("HasKey on a complex class expression is not supported")
+            return
+        keys = [self._property_expr(expr) for expr in ctx.propertyExpr()]
+        self._key_axioms.append((self.entity_for(name), keys))
 
     def _apply_key_axioms(self):
         """Write ``owl:hasKey`` triples directly.

@@ -213,3 +213,54 @@ the block of the individual that holds the `equivalent_to` list.
 
 **Existence lines.** Both forms name their members, so neither adds `b : ⊤` beside
 `a = b` — the same rule as decision 10, extended to cover them.
+
+## 13. The predicate spellings are input only
+
+**Question.** `C(a)`, `r(a,b)`, `d(a,"x")` and `HasKey(C (r) (d))` now parse. Should
+they also be written?
+
+**Decided.** No. The writer keeps `a : C`, `(a,b) : r` and `C ⊑ key(...)`, so a
+document in the predicate forms normalises to the DL spelling on its first round
+trip.
+
+**Why.** It is what the reference implementation does, and the point of accepting
+them is to read what a language model produces, not to produce it.
+
+**Ordering is load-bearing.** The forms sit last in the grammar's `axiom` rule.
+`name` includes the role-characteristic keywords, so `Transitive(parent)` matches
+the generic `name '(' name ')'` alternative just as well as the `TRANS` one, and
+ANTLR takes the first that matches. A construct that could be a keyword form or a
+general form is **always** the keyword; `myns:Transitive(prop)` is the way out,
+the bare word being reserved. Every keyword is pinned in both spellings, because a
+grammar reordering would change the meaning of existing documents in silence.
+
+**The key's split is taken at its word.** `HasKey(C (hasPart) (serial))` states
+which group each property is in, so `hasPart` is an object property and `serial` a
+data property even though nothing else in the document says so. That is stronger
+evidence than `C ⊑ key(...)` can offer, which carries one flat list and leaves the
+kinds to be inferred.
+
+## 14. A class cannot also be an individual — and the assertion is dropped, not bent
+
+**This is a real divergence from the reference implementation**, and it is forced.
+
+**Question.** `ComponentType(Person)` where `Person` is also a class — the punning
+pattern that language models produce when a class is itself an instance of a
+metaclass. OWL allows it: the reference reads `Person` as both `Class` and
+`NamedIndividual` and keeps the `ClassAssertion`.
+
+**Owlready2 cannot.** One IRI maps to one entity, so `Person` is a class or an
+individual, not both.
+
+**Decided.** Warn, naming both kinds, and **drop the assertion**.
+
+**Why not represent it approximately.** The previous behaviour appended the class
+to the existing entity's `is_a`, which turned `ComponentType(Person)` into
+`Person ⊑ ComponentType` — a subsumption. That is not a lossy version of the right
+axiom, it is a *different* one, and a reader of the output has no way to tell it
+was never written. Silence plus a wrong axiom is worse than a gap plus a warning.
+
+**What this costs.** A document using this pattern loses its class assertions when
+read by addle, while the reference keeps them. The warning says so, per statement.
+Anyone round-tripping such a document through addle should expect the difference;
+there is no way to avoid it short of Owlready2 gaining punning support.
