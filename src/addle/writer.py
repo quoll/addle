@@ -574,8 +574,14 @@ class Writer:
     def _class_axioms(self, cls):
         name = self.shorten(cls.iri)
         lines = []
-        for other in cls.equivalent_to:
-            lines.append("%s %s %s" % (name, EQUIV, self.concept(other)))
+        equivalents = list(cls.equivalent_to)
+        if equivalents:
+            # One chained line rather than one line per operand: `A ≡ B ≡ C` is
+            # the single axiom the reader built, and it is what the reference
+            # implementation writes.
+            lines.append("%s %s %s" % (name, EQUIV,
+                                       (" %s " % EQUIV).join(self.concept(other)
+                                                             for other in equivalents)))
         parents = [p for p in cls.is_a if p is not Thing]
         for parent in parents:
             lines.append("%s %s %s" % (name, SUBCLASS, self.concept(parent)))
