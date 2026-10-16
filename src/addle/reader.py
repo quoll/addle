@@ -441,7 +441,16 @@ class Reader:
             return
 
         if isinstance(ctx, P.DisjointRoleAxiomContext):
-            props = [self._property_expr(e) for e in ctx.propertyExpr()]
+            exprs = ctx.propertyExpr()
+            # Disj(r, r⁻) is asymmetry: no pair in r has its converse in r.
+            if len(exprs) == 2:
+                names = [scanner._property_name(e) for e in exprs]
+                if (names[0] is not None and names[0] == names[1]
+                        and scanner._is_inverted(exprs[0])
+                        != scanner._is_inverted(exprs[1])):
+                    self._give_characteristic(names[0], AsymmetricProperty)
+                    return
+            props = [self._property_expr(e) for e in exprs]
             AllDisjoint(props, ontology=self.onto)
             return
 
@@ -466,6 +475,17 @@ class Reader:
             return
 
         if isinstance(ctx, P.SubPropertyChainAxiomContext):
+            # r ∘ r ⊑ r is transitivity. Nobody writing a chain means the
+            # degenerate one, and OWL has a dedicated axiom for what it says.
+            exprs = ctx.chainExpr().propertyExpr()
+            names = [scanner._property_name(e) for e in exprs]
+            target_name = scanner._property_name(ctx.propertyExpr())
+            if (len(names) == 2 and names[0] == names[1] == target_name
+                    and target_name is not None
+                    and not any(scanner._is_inverted(e) for e in exprs)
+                    and not scanner._is_inverted(ctx.propertyExpr())):
+                self._give_characteristic(target_name, TransitiveProperty)
+                return
             chain = self._chain(ctx.chainExpr())
             target = self._property_expr(ctx.propertyExpr())
             target.property_chain.append(PropertyChain(chain))
@@ -615,15 +635,33 @@ class Reader:
 
     def _subclass_axiom(self, left, right):
         left_name = scanner._single_bare_name(left)
-        right_name = scanner._single_bare_name(right)
 
-        # p ⊑ q between two properties is a sub-property axiom.
-        if left_name and right_name and self.kinds.is_property(left_name):
-            sub = self.entity_for(left_name)
-            sup = self.entity_for(right_name)
-            if sup not in sub.is_a:
-                sub.is_a.append(sup)
+        # r ⊑ r⁻ and r⁻ ⊑ r are symmetry. One property, related to its own
+        # inverse: nobody writes a sub-property axiom between a property and
+        # itself, and OWL has a dedicated axiom for what it means.
+        symmetric = self._own_inverse_shape(left, right)
+        if symmetric is not None:
+            self._give_characteristic(symmetric, SymmetricProperty)
             return
+
+        # p ⊑ q between two properties is a sub-property axiom, and q may be an
+        # inverse: `r ⊑ s⁻` is SubObjectPropertyOf(r, ObjectInverseOf(s)). Only a
+        # bare name was handled, so the inverse form fell through to the class
+        # path and failed there with a message about annotation properties.
+        if left_name and self.kinds.is_property(left_name):
+            super_side = self._property_side(right)
+            if super_side is not None and super_side[0] is not None:
+                sub = self.entity_for(left_name)
+                super_name, inverted = super_side
+                if super_name == left_name and not inverted:
+                    # `r ⊑ r` says nothing, and Owlready2 refuses it outright:
+                    # a class cannot be its own base.
+                    return
+                sup = self.entity_for(super_name)
+                sup = self._inverse(sup) if inverted else sup
+                if sup not in sub.is_a:
+                    sub.is_a.append(sup)
+                return
 
         # ∃p.⊤ ⊑ C  is p's domain.
         domain_prop = self._domain_shape(left)
@@ -651,7 +689,14 @@ class Reader:
                 prop.is_a.append(IrreflexiveProperty)
             return
 
-        # ⊤ ⊑ X, once the ∀-range idiom above has been ruled out.
+        # ⊤ ⊑ ∃r.Self is reflexivity: everything is related to itself by r.
+        if _is_top(left):
+            reflexive = self._self_filler_name(right)
+            if reflexive is not None:
+                self._give_characteristic(reflexive, ReflexiveProperty)
+                return
+
+        # ⊤ ⊑ X, once the ∀-range and Self idioms above have been ruled out.
         if _is_top(left):
             self._add_universal_axiom(self._class_expr(right))
             return
@@ -674,7 +719,15 @@ class Reader:
         left_name = scanner._single_bare_name(left)
         right_inverse = scanner._single_inverse_name(right)
 
-        # contains ≡ locatedIn⁻
+        # r ≡ r⁻ is symmetry: a property that is its own inverse. Declaring it
+        # as its own inverse_property instead would be a different axiom, and
+        # Owlready2 would be asked to make a property point at itself.
+        if (left_name and right_inverse == left_name
+                and self.kinds.is_property(left_name)):
+            self._give_characteristic(left_name, SymmetricProperty)
+            return
+
+        # contains ≡ locatedIn⁻ — two different properties, an inverse pair.
         if left_name and right_inverse and self.kinds.is_property(left_name):
             prop = self.entity_for(left_name)
             prop.inverse_property = self.entity_for(right_inverse)
@@ -755,6 +808,58 @@ class Reader:
         names = _intersection_bare_names(left.intersectionExpr())
         if names and all(self.kinds.is_property(n) for n in names):
             return names
+        return None
+
+    def _give_characteristic(self, property_name, characteristic):
+        """Record a role characteristic recognised from an idiom."""
+        prop = self.entity_for(property_name)
+        if characteristic not in prop.is_a:
+            prop.is_a.append(characteristic)
+
+    def _own_inverse_shape(self, left, right):
+        """Role name if the axiom relates one property to its own inverse.
+
+        ``r ⊑ r⁻`` and ``r⁻ ⊑ r`` both say every pair in r has its converse in r
+        too, which is symmetry. Two *different* properties related this way is an
+        ordinary sub-property axiom and is left alone.
+        """
+        first = self._property_side(left)
+        second = self._property_side(right)
+        if first is None or second is None:
+            return None
+        name, inverted = first
+        other, other_inverted = second
+        if name is None or name != other:
+            return None
+        if inverted == other_inverted:
+            return None  # r ⊑ r, which says nothing
+        if not self.kinds.is_property(name):
+            return None
+        return name
+
+    def _property_side(self, ctx):
+        """``(name, inverted)`` if ``ctx`` is one property, else None.
+
+        The two spellings arrive by different routes: ``r`` reaches the class
+        grammar as a plain name atom and ``r⁻`` as an InversePropertyAtom, which
+        carries one ⁻ of its own over whatever its inner expression carries.
+        """
+        name = scanner._single_bare_name(ctx)
+        if name is not None:
+            return name, False
+        atom = _unwrap_atom_of(_unwrap_primary(ctx))
+        if isinstance(atom, P.InversePropertyAtomContext):
+            inner = atom.propertyExpr()
+            return scanner._property_name(inner), not scanner._is_inverted(inner)
+        return None
+
+    def _self_filler_name(self, ctx):
+        """Role name if ``ctx`` is exactly ``∃r.Self``, else None."""
+        primary = _unwrap_primary(ctx)
+        if isinstance(primary, (P.SomeValuesFromContext, P.ImplicitSomeValuesFromContext)):
+            inner = _unwrap_atom_of(primary.primary())
+            if isinstance(inner, P.SelfAtomContext):
+                return scanner._property_name(primary.propertyExpr())
         return None
 
     def _self_shape(self, left, right):
