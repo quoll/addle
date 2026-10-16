@@ -24,11 +24,44 @@ def _name_text(ctx):
     return ctx.getText() if ctx is not None else None
 
 
+def _predicate_ref_name(ctx):
+    """The name inside a ``predicateRef``, through any number of parentheses."""
+    while ctx.name() is None:
+        ctx = ctx.predicateRef()
+    return _name_text(ctx.name())
+
+
+def _is_inverted(ctx):
+    """Whether a ``propertyExpr`` applies an odd number of inverse markers.
+
+    ``r⁻`` is inverted, ``r⁻⁻`` is not, and parentheses make no difference. Only
+    an object property can be inverted at all, so this is kind evidence.
+    """
+    inverted = False
+    while True:
+        if isinstance(ctx, P.InversePropertyExprContext):
+            inverted = not inverted
+            ctx = ctx.propertyExpr()
+        elif isinstance(ctx, P.ParenPropertyExprContext):
+            ctx = ctx.propertyExpr()
+        else:
+            return inverted
+
+
 def _property_name(ctx):
-    """The bare name of a ``propertyExpr``, ignoring any inverse marker."""
-    if isinstance(ctx, (P.InversePropertyExprContext, P.SimplePropertyExprContext)):
-        return _name_text(ctx.name())
-    return None
+    """The bare name of a ``propertyExpr``, ignoring inverse markers and parentheses.
+
+    ``propertyExpr`` nests, so ``r``, ``r⁻``, ``(r)⁻`` and ``r⁻⁻`` all name ``r``.
+    Only the name matters to this pass: which kind of property it is cannot depend
+    on how many times it was inverted.
+    """
+    while True:
+        if isinstance(ctx, P.SimplePropertyExprContext):
+            return _name_text(ctx.name())
+        if isinstance(ctx, (P.InversePropertyExprContext, P.ParenPropertyExprContext)):
+            ctx = ctx.propertyExpr()
+            continue
+        return None
 
 
 class EntityKinds:
@@ -165,16 +198,19 @@ class _Scanner:
                             P.IrreflexiveRoleAxiomContext, P.SymmetricRoleAxiomContext,
                             P.AsymmetricRoleAxiomContext)):
             # These characteristics only exist for object properties.
-            self.kinds.note_property(_name_text(ctx.name()), OBJECT)
+            self.kinds.note_property(_property_name(ctx.propertyExpr()), OBJECT)
 
         elif isinstance(ctx, P.FunctionalRoleAxiomContext):
             # Func() applies to both object and data properties — kind unknown.
-            self.kinds.note_property(_name_text(ctx.name()), UNKNOWN)
+            # Func(r⁻) is the exception: only an object property has an inverse.
+            expr = ctx.propertyExpr()
+            kind = OBJECT if _is_inverted(expr) else UNKNOWN
+            self.kinds.note_property(_property_name(expr), kind)
 
         elif isinstance(ctx, P.DisjointRoleAxiomContext):
             # Disj() likewise applies to either kind.
-            for name in ctx.name():
-                self.kinds.note_property(_name_text(name), UNKNOWN)
+            for expr in ctx.propertyExpr():
+                self.kinds.note_property(_property_name(expr), UNKNOWN)
 
         elif isinstance(ctx, (P.AnnPropDomainAxiomContext, P.AnnPropRangeAxiomContext)):
             self.kinds.note_property(_name_text(ctx.name(0)), ANNOTATION)
@@ -186,12 +222,12 @@ class _Scanner:
 
         elif isinstance(ctx, P.HasKeyAxiomContext):
             self._class_expr(ctx.classExpr())
-            for name in ctx.keyExpr().name():
-                self.kinds.note_property(_name_text(name), UNKNOWN)
+            for expr in ctx.keyExpr().propertyExpr():
+                self.kinds.note_property(_property_name(expr), UNKNOWN)
 
         elif isinstance(ctx, P.SubPropertyChainAxiomContext):
             self._chain(ctx.chainExpr())
-            self.kinds.note_property(_name_text(ctx.name()), OBJECT)
+            self.kinds.note_property(_property_name(ctx.propertyExpr()), OBJECT)
 
         elif isinstance(ctx, P.PropertyChainEquivAxiomContext):
             self.kinds.note_property(_name_text(ctx.name()), OBJECT)
@@ -275,7 +311,7 @@ class _Scanner:
             # properties unless something else proves otherwise.
             for expr in ctx.propertyExpr():
                 self.kinds.note_property(_property_name(expr), DATA)
-            self.kinds.predicates.add(_name_text(ctx.name()))
+            self.kinds.predicates.add(_predicate_ref_name(ctx.predicateRef()))
 
         elif isinstance(ctx, (P.SomeValuesFromContext, P.AllValuesFromContext,
                               P.ImplicitSomeValuesFromContext,
@@ -304,7 +340,7 @@ class _Scanner:
             # A compound filler (union/intersection) — inspect its leaves.
             return self._compound_filler_kind(filler)
 
-        if isinstance(atom, (P.NumericDataRangeAtomContext, P.DataRangeAtomContext)):
+        if isinstance(atom, (P.RestrictedDatatypeAtomContext, P.DataRangeAtomContext)):
             return DATA
         if isinstance(atom, P.NameAtomContext):
             name = _name_text(atom)
@@ -327,7 +363,7 @@ class _Scanner:
         """Kind implied by a union/intersection filler: DATA if any leaf is a datatype."""
         kinds = set()
         for atom in _leaf_atoms(ctx):
-            if isinstance(atom, (P.NumericDataRangeAtomContext, P.DataRangeAtomContext)):
+            if isinstance(atom, (P.RestrictedDatatypeAtomContext, P.DataRangeAtomContext)):
                 kinds.add(DATA)
             elif isinstance(atom, P.NameAtomContext):
                 kinds.add(DATA if is_datatype_name(_name_text(atom)) else OBJECT)
@@ -362,8 +398,8 @@ class _Scanner:
         if isinstance(ctx, P.NameAtomContext):
             self.kinds.note_class(_name_text(ctx))
         elif isinstance(ctx, P.InversePropertyAtomContext):
-            self.kinds.note_property(_name_text(ctx.name()), OBJECT)
-        elif isinstance(ctx, P.NumericDataRangeAtomContext):
+            self.kinds.note_property(_property_name(ctx.propertyExpr()), OBJECT)
+        elif isinstance(ctx, P.RestrictedDatatypeAtomContext):
             self.kinds.datatypes.add(_name_text(ctx.name()))
         elif isinstance(ctx, P.DataRangeAtomContext):
             self.kinds.datatypes.add(_name_text(ctx.datatypeRestriction().name()))
@@ -393,7 +429,12 @@ def _single_inverse_name(ctx):
     """The name text if ``ctx`` is exactly ``name⁻``, else None."""
     atom = _unwrap_class_expr_atom(ctx)
     if isinstance(atom, P.InversePropertyAtomContext):
-        return _name_text(atom.name())
+        # The atom is `propertyExpr INVERSE`, so it carries one ⁻ of its own and
+        # the inner expression may carry more. Exactly one in total is `name⁻`;
+        # two is `name` again and names no inverse at all.
+        inner = atom.propertyExpr()
+        if not _is_inverted(inner):
+            return _property_name(inner)
     return None
 
 
@@ -423,7 +464,7 @@ def _leaf_atoms(ctx):
             return
         if isinstance(node, P.AtomContext) or isinstance(
             node, (P.NameAtomContext, P.TopAtomContext, P.BottomAtomContext,
-                   P.SelfAtomContext, P.OneOfAtomContext, P.NumericDataRangeAtomContext,
+                   P.SelfAtomContext, P.OneOfAtomContext, P.RestrictedDatatypeAtomContext,
                    P.DataRangeAtomContext, P.InversePropertyAtomContext,
                    P.EmptyAtomContext)
         ):

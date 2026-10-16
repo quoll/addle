@@ -89,6 +89,31 @@ class DLESyntaxVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by DLESyntaxParser#annotationString.
+    def visitAnnotationString(self, ctx:DLESyntaxParser.AnnotationStringContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#ObjectAssertionAxiom.
+    def visitObjectAssertionAxiom(self, ctx:DLESyntaxParser.ObjectAssertionAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#DataAssertionAxiom.
+    def visitDataAssertionAxiom(self, ctx:DLESyntaxParser.DataAssertionAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#NegativeObjectAssertionAxiom.
+    def visitNegativeObjectAssertionAxiom(self, ctx:DLESyntaxParser.NegativeObjectAssertionAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#NegativeDataAssertionAxiom.
+    def visitNegativeDataAssertionAxiom(self, ctx:DLESyntaxParser.NegativeDataAssertionAxiomContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by DLESyntaxParser#HasKeyAxiom.
     def visitHasKeyAxiom(self, ctx:DLESyntaxParser.HasKeyAxiomContext):
         return self.visitChildren(ctx)
@@ -169,6 +194,46 @@ class DLESyntaxVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by DLESyntaxParser#SameIndividualAxiom.
+    def visitSameIndividualAxiom(self, ctx:DLESyntaxParser.SameIndividualAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#DifferentIndividualsAxiom.
+    def visitDifferentIndividualsAxiom(self, ctx:DLESyntaxParser.DifferentIndividualsAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#ClassAssertionAxiom.
+    def visitClassAssertionAxiom(self, ctx:DLESyntaxParser.ClassAssertionAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#PrefixedClassAssertionAxiom.
+    def visitPrefixedClassAssertionAxiom(self, ctx:DLESyntaxParser.PrefixedClassAssertionAxiomContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#UnaryPredicateAssertion.
+    def visitUnaryPredicateAssertion(self, ctx:DLESyntaxParser.UnaryPredicateAssertionContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#BinaryPredicateAssertion.
+    def visitBinaryPredicateAssertion(self, ctx:DLESyntaxParser.BinaryPredicateAssertionContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#BinaryDataPredicateAssertion.
+    def visitBinaryDataPredicateAssertion(self, ctx:DLESyntaxParser.BinaryDataPredicateAssertionContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#OfnHasKeyAxiom.
+    def visitOfnHasKeyAxiom(self, ctx:DLESyntaxParser.OfnHasKeyAxiomContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by DLESyntaxParser#chainExpr.
     def visitChainExpr(self, ctx:DLESyntaxParser.ChainExprContext):
         return self.visitChildren(ctx)
@@ -181,6 +246,11 @@ class DLESyntaxVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by DLESyntaxParser#InversePropertyExpr.
     def visitInversePropertyExpr(self, ctx:DLESyntaxParser.InversePropertyExprContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#ParenPropertyExpr.
+    def visitParenPropertyExpr(self, ctx:DLESyntaxParser.ParenPropertyExprContext):
         return self.visitChildren(ctx)
 
 
@@ -254,13 +324,18 @@ class DLESyntaxVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by DLESyntaxParser#predicateRef.
+    def visitPredicateRef(self, ctx:DLESyntaxParser.PredicateRefContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by DLESyntaxParser#cardSymbol.
     def visitCardSymbol(self, ctx:DLESyntaxParser.CardSymbolContext):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by DLESyntaxParser#NumericDataRangeAtom.
-    def visitNumericDataRangeAtom(self, ctx:DLESyntaxParser.NumericDataRangeAtomContext):
+    # Visit a parse tree produced by DLESyntaxParser#RestrictedDatatypeAtom.
+    def visitRestrictedDatatypeAtom(self, ctx:DLESyntaxParser.RestrictedDatatypeAtomContext):
         return self.visitChildren(ctx)
 
 
@@ -309,8 +384,13 @@ class DLESyntaxVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by DLESyntaxParser#numericFacet.
-    def visitNumericFacet(self, ctx:DLESyntaxParser.NumericFacetContext):
+    # Visit a parse tree produced by DLESyntaxParser#ComparisonFacet.
+    def visitComparisonFacet(self, ctx:DLESyntaxParser.ComparisonFacetContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by DLESyntaxParser#KeywordFacet.
+    def visitKeywordFacet(self, ctx:DLESyntaxParser.KeywordFacetContext):
         return self.visitChildren(ctx)
 
 

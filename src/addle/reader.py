@@ -33,6 +33,8 @@ from owlready2 import (
     TransitiveProperty,
 )
 from owlready2.class_construct import Construct
+from owlready2.util import locstr
+from owlready2 import InverseFunctionalProperty
 from owlready2.base import EXACTLY, HAS_SELF, MAX, MIN, ONLY, SOME
 
 from ._antlr.DLESyntaxLexer import DLESyntaxLexer
@@ -65,6 +67,13 @@ _DATATYPE_BY_IRI = {}
 
 def _build_datatype_table():
     base = owlready2.base
+    # Owlready2's own IRI → type mapping, which covers the XSD subtypes: xsd:int
+    # is int and xsd:token is normstr, neither of which appears in the reverse
+    # table below. Reading only the reverse table degraded both to xsd:string.
+    for iri, abbrev in base._universal_iri_2_abbrev.items():
+        datatype = base._universal_abbrev_2_datatype.get(abbrev)
+        if datatype is not None and iri not in _DATATYPE_BY_IRI:
+            _DATATYPE_BY_IRI[iri] = datatype
     for datatype, abbrev in base._universal_datatype_2_abbrev.items():
         iri = base._universal_abbrev_2_iri.get(abbrev)
         if iri and iri not in _DATATYPE_BY_IRI:
@@ -132,13 +141,29 @@ class Reader:
 
         for decl in tree.prefixDecl():
             prefix = decl.PNAME_NS().getText()[:-1]
-            self.prefixes[prefix] = _strip_angle(decl.IRI().getText())
+            self.prefixes[prefix] = self._declared_iri(decl)
         for decl in tree.ontologyDecl():
-            self.ontology_iri = self._iri_ref(decl.iriRef())
+            self.ontology_iri = self._declared_iri(decl)
         for decl in tree.versionDecl():
-            self.version_iri = self._iri_ref(decl.iriRef())
+            self.version_iri = self._declared_iri(decl)
         for decl in tree.importDecl():
-            self.imports.append(self._iri_ref(decl.iriRef()))
+            self.imports.append(self._declared_iri(decl))
+
+    def _declared_iri(self, decl):
+        """The IRI a document-level declaration names.
+
+        Every one of them accepts either an angle-bracketed IRI or a quoted
+        string, because a model asked to write a document reaches for quotes as
+        often as for brackets. The two mean the same thing; no escape processing
+        applies to the string form, an IRI having no escapes to process.
+        """
+        text = decl.STRING()
+        if text is not None:
+            quoted, _lang = _split_tagged(text.getText())
+            return quoted[1:-1]
+        if hasattr(decl, "iriRef"):
+            return self._iri_ref(decl.iriRef())
+        return _strip_angle(decl.IRI().getText())
 
     def _ensure_ontology(self):
         if self.onto is None:
@@ -277,18 +302,19 @@ class Reader:
 
     def _annotation(self, ctx):
         if isinstance(ctx, P.LabelAnnotationContext):
-            self._annotate(ctx.name(), LABEL_IRI, _unquote(ctx.STRING().getText()))
+            self._annotate(ctx.name(), LABEL_IRI, self._annotation_string(ctx.annotationString()))
 
         elif isinstance(ctx, P.DocAnnotationContext):
-            self._annotate(ctx.name(), DOC_IRI, _unquote(ctx.STRING().getText()))
+            self._annotate(ctx.name(), DOC_IRI, self._annotation_string(ctx.annotationString()))
 
         elif isinstance(ctx, P.StorageAnnotationContext):
-            self._annotate(ctx.name(), STORAGE_IRI, _unquote(ctx.STRING().getText()))
+            self._annotate(ctx.name(), STORAGE_IRI, self._annotation_string(ctx.annotationString()))
 
         elif isinstance(ctx, P.DbAnnotationContext):
             # `@db name` with no string means "stored under its own name".
-            text = ctx.STRING()
-            value = _unquote(text.getText()) if text is not None else ctx.name().getText()
+            text = ctx.annotationString()
+            value = (self._annotation_string(text) if text is not None
+                     else ctx.name().getText())
             self._annotate(ctx.name(), DB_IRI, value)
 
         elif isinstance(ctx, P.AnnAnnotationContext):
@@ -297,7 +323,7 @@ class Reader:
             self.entity_for(ctx.name(1).getText())  # declare the annotation property
             value = ctx.annotationValue()
             if isinstance(value, P.StringAnnotationValueContext):
-                self._add_data_triple(subject, prop, _unquote(value.STRING().getText()))
+                self._add_data_triple(subject, prop, self._annotation_string(value.annotationString()))
             else:
                 self._add_object_triple(subject, prop, self.expand(value.name().getText()))
 
@@ -357,6 +383,15 @@ class Reader:
             if isinstance(node, P.HasKeyAxiomContext):
                 name = scanner._single_bare_name(node.classExpr())
                 return self.expand(name) if name else None
+            # A statement whose subject is a property expression rather than a
+            # bare name: the chain axioms, and the role characteristics, which
+            # all took a plain `name` before propertyExpr became recursive.
+            if hasattr(node, "propertyExpr"):
+                value = node.propertyExpr()
+                if value is not None and not isinstance(value, list):
+                    name = scanner._property_name(value)
+                    if name is not None:
+                        return self.expand(name)
             for attr in ("name",):
                 if hasattr(node, attr):
                     value = getattr(node, attr)()
@@ -374,7 +409,10 @@ class Reader:
             if node is None or not hasattr(node, "getChildCount"):
                 continue
             if isinstance(node, P.PropertyExprContext):
-                return self.expand(node.name().getText())
+                name = scanner._property_name(node)
+                if name is not None:
+                    return self.expand(name)
+                continue
             for i in range(node.getChildCount()):
                 stack.append(node.getChild(i))
         return None
@@ -384,13 +422,20 @@ class Reader:
     def _axiom(self, ctx):
         characteristic = _CHARACTERISTICS.get(type(ctx))
         if characteristic is not None:
-            prop = self.entity_for(ctx.name().getText())
+            expr = ctx.propertyExpr()
+            # Func(r⁻) is InverseFunctional(r). OWL has a dedicated axiom for it,
+            # and the two say the same thing, so the dedicated one is what gets
+            # built — matching the reference implementation, which writes both as
+            # Functional(r⁻) and reads both back here.
+            if characteristic is FunctionalProperty and scanner._is_inverted(expr):
+                characteristic = InverseFunctionalProperty
+            prop = self.entity_for(scanner._property_name(expr))
             if characteristic not in prop.is_a:
                 prop.is_a.append(characteristic)
             return
 
         if isinstance(ctx, P.DisjointRoleAxiomContext):
-            props = [self.entity_for(n.getText()) for n in ctx.name()]
+            props = [self._property_expr(e) for e in ctx.propertyExpr()]
             AllDisjoint(props, ontology=self.onto)
             return
 
@@ -410,13 +455,13 @@ class Reader:
             if name is None:
                 self.warnings.append("key() on a complex class expression is not supported")
                 return
-            keys = [self.entity_for(n.getText()) for n in ctx.keyExpr().name()]
+            keys = [self._property_expr(e) for e in ctx.keyExpr().propertyExpr()]
             self._key_axioms.append((self.entity_for(name), keys))
             return
 
         if isinstance(ctx, P.SubPropertyChainAxiomContext):
             chain = self._chain(ctx.chainExpr())
-            target = self.entity_for(ctx.name().getText())
+            target = self._property_expr(ctx.propertyExpr())
             target.property_chain.append(PropertyChain(chain))
             return
 
@@ -618,10 +663,19 @@ class Reader:
         return [self._property_expr(e) for e in ctx.propertyExpr()]
 
     def _property_expr(self, ctx):
-        prop = self.entity_for(ctx.name().getText())
+        """``r``, ``r⁻``, ``(r⁻)``, ``(r)⁻``, ``r⁻⁻``.
+
+        Parentheses group and carry no meaning of their own, and ⁻ is a postfix
+        operator over whatever precedes it rather than over a name, so the shape
+        is recursive. A doubled ⁻ cancels: that is handled in ``_inverse`` rather
+        than here, because the cancellation is a property of the expression being
+        built, not of the syntax.
+        """
+        if isinstance(ctx, P.ParenPropertyExprContext):
+            return self._property_expr(ctx.propertyExpr())
         if isinstance(ctx, P.InversePropertyExprContext):
-            return self._inverse(prop)
-        return prop
+            return self._inverse(self._property_expr(ctx.propertyExpr()))
+        return self.entity_for(ctx.name().getText())
 
     def _inverse(self, prop):
         """``p⁻`` as an Owlready2 property expression.
@@ -633,9 +687,18 @@ class Reader:
         needs a storid already in place, and Owlready2 only assigns one when the
         construct is attached to an ontology.
         """
+        # r⁻⁻ is r. Owlready2's Inverse does not fold this, so an unfolded double
+        # inverse would reach the store as a nested construct that no reader —
+        # including this one — puts back as the plain property.
+        if isinstance(prop, Inverse):
+            return prop.property
         inverse = Inverse(prop)
         if isinstance(inverse, Construct) and inverse.storid is None:
             inverse.storid = self.onto.world.new_blank_node()
+            # The storid alone is an empty node. Without the owl:inverseOf triple
+            # describing it, anything that reads the construct back — a key list,
+            # for one — finds nothing there and yields None.
+            inverse._create_triples(self.onto)
         return inverse
 
     def _class_expr(self, ctx):
@@ -708,7 +771,7 @@ class Reader:
 
     def _exists_top(self, prop, property_expr_ctx):
         """``∃p.⊤``: a min-1 bound, which needs no filler for either kind."""
-        name = property_expr_ctx.name().getText()
+        name = scanner._property_name(property_expr_ctx)
         if self.kinds.is_data_property(name):
             # There is no Owlready2 spelling for the top data range, and
             # `≥1 p` is exactly equivalent.
@@ -732,7 +795,8 @@ class Reader:
 
     def _multi_role(self, ctx):
         quantifier = "∃" if isinstance(ctx, P.MultiRoleSomeValuesFromContext) else "∀"
-        return self._predicate_class(quantifier, ctx.propertyExpr(), ctx.name().getText())
+        return self._predicate_class(
+            quantifier, ctx.propertyExpr(), _predicate_ref_name(ctx.predicateRef()))
 
     def _predicate_filler(self, property_expr_ctx, filler):
         """The predicate name if this restriction's filler is a predicate.
@@ -749,7 +813,7 @@ class Reader:
         if name in self.kinds.predicates:
             return name
 
-        role = property_expr_ctx.name().getText()
+        role = scanner._property_name(property_expr_ctx)
         if self.kinds.is_data_property(role):
             return None
         if self.kinds.is_property(name) or is_datatype_name(name) or ":" in name:
@@ -793,13 +857,13 @@ class Reader:
         if isinstance(ctx, P.NameAtomContext):
             return self._name_atom(ctx.getText())
         if isinstance(ctx, P.InversePropertyAtomContext):
-            return Inverse(self.entity_for(ctx.name().getText()))
+            return self._inverse(self._property_expr(ctx.propertyExpr()))
         if isinstance(ctx, P.ParenAtomContext):
             return self._class_expr(ctx.classExpr())
         if isinstance(ctx, P.OneOfAtomContext):
             return self._one_of(ctx.oneOfList())
-        if isinstance(ctx, P.NumericDataRangeAtomContext):
-            return self._numeric_range(ctx)
+        if isinstance(ctx, P.RestrictedDatatypeAtomContext):
+            return self._restricted_datatype(ctx)
         if isinstance(ctx, P.DataRangeAtomContext):
             return self._datatype_restriction(ctx.datatypeRestriction())
         raise DleSemanticError("unsupported atom: %s" % type(ctx).__name__)
@@ -814,23 +878,95 @@ class Reader:
             return Nothing
         return self.entity_for(name)
 
+    def _annotation_string(self, ctx):
+        """An ``annotationString`` as a Python value: ``"x"``, ``"x"@en``, ``"x"^^t``."""
+        return self._string_value(ctx.STRING().getText(), ctx.name())
+
+    def _string_value(self, token_text, type_ctx=None):
+        """A STRING token as a Python value, honouring ``@lang`` and ``^^type``.
+
+        A language tag becomes Owlready2's ``locstr``, which is a ``str`` carrying
+        ``.lang`` and serialises back with the tag intact. A datatype is applied
+        when Owlready2 has a Python type for it; when it does not, the text is
+        kept and a warning raised, because a silently dropped datatype turns
+        ``"3"^^xsd:token`` into an ordinary string with nothing to show for it.
+
+        A tag and a datatype cannot both apply: RDF gives a tagged literal the
+        type rdf:langString, so the grammar's ``^^`` is redundant there and the
+        tag wins.
+        """
+        quoted, lang = _split_tagged(token_text)
+        value = _unquote(quoted)
+        if lang is not None:
+            return locstr(value, lang)
+        if type_ctx is None:
+            return value
+        name = type_ctx.getText()
+        iri = self.expand(name)
+        # Owlready2's own parser, the one its RDF reader uses, so that the value
+        # built here is the value Owlready2 would build from the same literal in
+        # OWL/XML. A table of our own was wrong in both directions: it had no
+        # entry for xsd:int, which Owlready2 reads as int, and it would have
+        # invented conversions Owlready2 does not make.
+        abbrev = owlready2.base._universal_iri_2_abbrev.get(iri)
+        parser = owlready2.base._universal_abbrev_2_datatype_parser.get(abbrev)
+        # The table's values are (python_type, parser) pairs for some datatypes
+        # and a bare callable for others. It is the parser that is wanted, not
+        # the type: for xsd:boolean the pair is (bool, _bool_parser), and calling
+        # bool on the lexical form reads "false" as True.
+        if isinstance(parser, tuple):
+            parser = parser[1]
+        if parser is None:
+            self.warnings.append(
+                "Owlready2 has no parser for datatype %s; %r kept as a string"
+                % (name, value))
+            return value
+        try:
+            return parser(value)
+        except (TypeError, ValueError) as exc:
+            self.warnings.append(
+                "%r is not a valid %s (%s); kept as a string" % (value, name, exc))
+            return value
+
+    def _literal_value(self, ctx):
+        if isinstance(ctx, P.StringLiteralContext):
+            return self._string_value(ctx.STRING().getText(), ctx.name())
+        if isinstance(ctx, P.NumberLiteralContext):
+            return _number(ctx.NUMBER().getText())
+        if isinstance(ctx, P.BoolLiteralContext):
+            return ctx.BOOL().getText() == "true"
+        raise DleSemanticError("unsupported literal: %s" % type(ctx).__name__)
+
     def _one_of(self, ctx):
         elements = []
         for elem in ctx.oneOfElem():
             if isinstance(elem, P.IndividualElemContext):
                 elements.append(self.individual_for(elem.name().getText()))
             else:
-                elements.append(_literal_value(elem.literal()))
+                elements.append(self._literal_value(elem.literal()))
         return OneOf(elements)
 
-    def _numeric_range(self, ctx):
-        """``xsd:integer[≥0 ⊓ <10]`` — compact numeric facets."""
+    def _restricted_datatype(self, ctx):
+        """``xsd:integer[≥0 ⊓ <10]``, ``xsd:string[minLength 3]``, or both at once.
+
+        One bracket carries every facet, and the two spellings may be mixed inside
+        it: a comparison facet is written with its symbol, anything else with its
+        keyword. They used to be separate shapes with separate brackets, which is
+        why the legacy ``[datatypeRestriction]`` form is still read below.
+        """
         base = self.datatype_for(ctx.name().getText())
         kwargs = {}
-        for facet in ctx.numericFacet():
-            symbol = facet.getChild(0).getText()
-            value = _number(facet.NUMBER().getText())
-            kwargs[_COMPACT_FACET_KWARG[symbol]] = value
+        for item in ctx.facetItem():
+            if isinstance(item, P.ComparisonFacetContext):
+                symbol = item.getChild(0).getText()
+                kwargs[_COMPACT_FACET_KWARG[symbol]] = _number(item.NUMBER().getText())
+                continue
+            keyword = item.name().getText()
+            kwarg = FACET_KEYWORDS.get(keyword)
+            if kwarg is None:
+                self.warnings.append("unknown datatype facet %r; ignored" % keyword)
+                continue
+            kwargs[kwarg] = self._literal_value(item.literal())
         return ConstrainedDatatype(base, **kwargs)
 
     def _datatype_restriction(self, ctx):
@@ -843,7 +979,7 @@ class Reader:
             if kwarg is None:
                 self.warnings.append("unknown datatype facet %r; ignored" % keyword)
                 continue
-            kwargs[kwarg] = _literal_value(facet.literal())
+            kwargs[kwarg] = self._literal_value(facet.literal())
         return ConstrainedDatatype(base, **kwargs)
 
     # ── deferred axioms ──────────────────────────────────────────────────────
@@ -900,6 +1036,30 @@ def _strip_angle(text):
     return text[1:-1] if text.startswith("<") else text
 
 
+def _predicate_ref_name(ctx):
+    """The name inside a ``predicateRef``, which may be parenthesised to any depth.
+
+    ``∃r₁,r₂.(pred)`` and ``∃r₁,r₂.pred`` name the same predicate; the parentheses
+    exist because generators emit them, not because they mean anything.
+    """
+    while ctx.name() is None:
+        ctx = ctx.predicateRef()
+    return ctx.name().getText()
+
+
+def _split_tagged(token_text):
+    """Separate a STRING token into its quoted part and its language tag.
+
+    The tag is part of the token — ``"Hanzi"@zh-Hant`` lexes as one STRING — so
+    it has to come off before the escapes are undone, or the ``@`` would be read
+    as content. The closing quote is the last one in the token, which is exact
+    rather than approximate: the token rule admits no unescaped quote inside.
+    """
+    end = token_text.rindex('"')
+    tail = token_text[end + 1:]
+    return token_text[:end + 1], (tail[1:] if tail.startswith("@") else None)
+
+
 def _unquote(text):
     """Undo the grammar's STRING token quoting and escapes."""
     body = text[1:-1]
@@ -926,14 +1086,6 @@ def _number(text):
     return float(text) if "." in text else int(text)
 
 
-def _literal_value(ctx):
-    if isinstance(ctx, P.StringLiteralContext):
-        return _unquote(ctx.STRING().getText())
-    if isinstance(ctx, P.NumberLiteralContext):
-        return _number(ctx.NUMBER().getText())
-    if isinstance(ctx, P.BoolLiteralContext):
-        return ctx.BOOL().getText() == "true"
-    raise DleSemanticError("unsupported literal: %s" % type(ctx).__name__)
 
 
 def _unwrap_primary(ctx):
