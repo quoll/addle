@@ -356,24 +356,47 @@ class Reader:
             args = ",".join(n.getText() for n in names[1:])
             body = _definition_body(ctx.DEFINED_AS_LINE().getText())
             signature = "%s(%s)" % (names[0].getText(), args)
+            self._declare_if_used(names[0].getText())
             self._add_data_triple(
                 self.expand(names[0].getText()), PREDICATE_IRI, "%s → %s" % (signature, body)
             )
 
         elif isinstance(ctx, P.FolAnnotationContext):
             body = _definition_body(ctx.DEFINED_AS_LINE().getText())
+            self._declare_if_used(ctx.name().getText())
             self._add_data_triple(
                 self.expand(ctx.name().getText()),
                 PREDICATE_IRI,
                 "%s → %s" % (ctx.name().getText(), body),
             )
 
+    def _declare_if_used(self, name):
+        """Create the entity for a ≝ name that is also used as one.
+
+        Order matters here in a way it does not for OWLAPI. Writing the
+        rdf:value triple first leaves an IRI carrying triples but no rdf:type,
+        which Owlready2 hands back as an *individual*; asking it to become a
+        class or a property afterwards is a metaclass change, which it refuses
+        with an error about object layouts. Declaring first means the later
+        axiom finds the entity it expects.
+
+        A definition that is never used in a class or role position is still
+        left untyped, which is what the reference implementation does.
+        """
+        if self._names_a_type(name):
+            self.entity_for(name)
+
     def _annotate(self, name_ctx, property_iri, value):
         name = name_ctx.getText()
         # Predicates are not OWL entities and are deliberately left untyped,
         # exactly as OWLAPI leaves them; only the annotation itself is written.
+        # A predicate the document also uses as a class or a property is an
+        # entity after all, and has to be declared before the annotation puts
+        # an untyped individual at its IRI.
         if name not in self.kinds.predicates:
             self.entity_for(name)
+        else:
+            self._declare_if_used(name)
         self._add_data_triple(self.expand(name), property_iri, value)
 
     def _attach_comments(self, comments, statement, node):

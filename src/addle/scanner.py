@@ -133,11 +133,19 @@ class EntityKinds:
         return self.properties.get(name) == ANNOTATION
 
     def is_class(self, name):
-        return (
-            name not in self.properties
-            and name not in self.predicates
-            and not is_datatype_name(name)
-        )
+        if name in self.properties or is_datatype_name(name):
+            return False
+        if name in self.predicates:
+            # A ≝ definition on its own declares nothing: the reference
+            # implementation leaves the name untyped and writes only the
+            # rdf:value annotation. What makes an upper-case definition
+            # "usable in DL axioms" is the document going on to *use* it in
+            # class position, so that is the question asked here. Deciding on
+            # the initial letter instead would disagree with the reference,
+            # which types `senior ≝ …` as an object property the moment
+            # `∃senior.⊤` appears.
+            return name in self.class_names
+        return True
 
     # ── propagation ──────────────────────────────────────────────────────────
 
@@ -181,7 +189,6 @@ class EntityKinds:
 
         # A name classified as a property is not also a class.
         self.class_names -= set(self.properties)
-        self.class_names -= self.predicates
 
 
 class _Scanner:
