@@ -20,6 +20,12 @@ footers of any kind.
   upstream, copy it across, then run `tools/grammar.py generate` and
   `tools/grammar.py update`.
 - `src/addle/_antlr/` is generated. Never edit it by hand.
+- `src/addle/header.txt` is also a **copy**, of the header DLe writes into every
+  document it produces. Do not revise it here: it describes the language, not
+  this implementation, so a wording change belongs upstream and is copied across.
+  Before copying one, check that addle actually supports what it claims — the
+  header is where the ≝-in-a-DL-axiom gap was found. `tools/grammar.py check
+  --against <DLe>` compares it along with the grammar.
 - The IRIs and annotation properties in `src/addle/vocab.py` are a wire format
   shared with the Java implementation. Changing any of them breaks
   cross-implementation round-trips.

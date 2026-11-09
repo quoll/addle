@@ -47,6 +47,11 @@ SHARED_FILES = [
         "parsers/src/test/resources/data/wildlife-reserve-test.dle",
         "the conformance corpus is what proves the two agree",
     ),
+    (
+        ROOT / "src" / "addle" / "header.txt",
+        "parsers/src/main/resources/org/semanticweb/owlapi/dlesyntax/dle-syntax-header.txt",
+        "the header documents the language and is written into every document",
+    ),
 ]
 
 
