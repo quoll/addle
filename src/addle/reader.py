@@ -359,6 +359,12 @@ class Reader:
             self._annotate(ctx.name(), DB_IRI, value)
 
         elif isinstance(ctx, P.AnnAnnotationContext):
+            # The subject is declared for the same reason `_annotate` declares
+            # its own: `@ann A p "x"` before `A ⊑ ⊤` otherwise left an untyped
+            # individual at A's IRI, and the axiom could not then make it a class.
+            # Only the property was declared here, which is why @label and @doc
+            # never showed the fault and @ann did.
+            self._declare_subject(ctx.name(0).getText())
             subject = self.expand(ctx.name(0).getText())
             prop = self.expand(ctx.name(1).getText())
             self.entity_for(ctx.name(1).getText())  # declare the annotation property
@@ -404,17 +410,28 @@ class Reader:
         if self._names_a_type(name):
             self.entity_for(name)
 
-    def _annotate(self, name_ctx, property_iri, value):
-        name = name_ctx.getText()
-        # Predicates are not OWL entities and are deliberately left untyped,
-        # exactly as OWLAPI leaves them; only the annotation itself is written.
-        # A predicate the document also uses as a class or a property is an
-        # entity after all, and has to be declared before the annotation puts
-        # an untyped individual at its IRI.
+    def _declare_subject(self, name):
+        """Declare what an annotation is about, before its triple is written.
+
+        Order matters here in a way it does not for OWLAPI, which has no entity
+        identity to get wrong. Writing a triple on an IRI that carries no
+        ``rdf:type`` leaves Owlready2 holding an *individual* there, and asking
+        that to become a class or a property afterwards is a metaclass change it
+        refuses outright. Declaring first means a later axiom finds the entity it
+        expects, whichever order the document puts them in.
+
+        Predicates are not OWL entities and are deliberately left untyped,
+        exactly as OWLAPI leaves them; only the annotation itself is written. One
+        the document also uses as a class or a property is an entity after all.
+        """
         if name not in self.kinds.predicates:
             self.entity_for(name)
         else:
             self._declare_if_used(name)
+
+    def _annotate(self, name_ctx, property_iri, value):
+        name = name_ctx.getText()
+        self._declare_subject(name)
         self._add_data_triple(self.expand(name), property_iri, value)
 
     def _attach_comments(self, comments, statement, node):
