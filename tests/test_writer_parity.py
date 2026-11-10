@@ -111,3 +111,39 @@ def test_a_class_named_nowhere_else_keeps_its_line():
 def test_a_name_is_not_found_inside_a_longer_one():
     """``Cat`` must not count as mentioned because ``Catalogue`` appears."""
     assert "Cat ⊑ ⊤" in _lines("A ⊑ Catalogue\nCat ⊑ ⊤\n")
+
+
+@pytest.mark.parametrize("document", [
+    "A ⊑ ∃r.B\n",
+    "A ⊑ ∀r.B\n",
+    "⊤ ⊑ ∀r.B\n",
+])
+def test_a_filler_is_a_mention(document):
+    """The most ordinary way to name a class, and it was not counted as one.
+
+    A dot separates a role from its filler, and no DLe name contains one:
+    ``NameChar`` is ``NameStart | [0-9] | '-'``. Treating the dot as though it
+    might be part of a longer name meant ``∃r.B`` did not count as naming ``B``,
+    so a filler-only class kept an existence line the reference omits.
+    """
+    assert "B ⊑ ⊤" not in _lines(document), document
+
+
+def test_a_disjointness_is_a_mention():
+    """Named only in a line that follows the blocks, rather than inside one.
+
+    Disjointness, difference, universal and orphan axioms are rendered after the
+    entity blocks. Left out of the reckoning, a class named only there kept its
+    existence line: the test is "anywhere else in the document", not "in some
+    other block".
+    """
+    assert "B ⊑ ⊤" not in _lines("A ⊓ B ⊑ ⊥\n")
+
+
+def test_a_local_part_is_not_a_mention():
+    """``B`` in ``skos:B`` is one name's local part, not a mention of ``B``.
+
+    The colon still disqualifies a match, and must: loosening the dot must not
+    loosen this, or a class would lose the only line saying it exists.
+    """
+    assert "B ⊑ ⊤" in _lines("A ⊑ skos:B\nB ⊑ ⊤\n")

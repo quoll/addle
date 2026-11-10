@@ -299,14 +299,19 @@ class Writer:
         # and the document would not read.
         body = list(self._predicate_definitions())
         blocks = [(entity, self._entity_block(entity)) for entity in self._entities()]
-        for _entity, block in self._without_redundant_existence(blocks):
+        # Rendered before the blocks are filtered, not after: these lines name
+        # classes too, and a `C \u2291 \u22a4` is redundant beside any of them. Left out
+        # of the reckoning, a class named only by a disjointness kept a line
+        # saying it exists that the reference implementation does not write.
+        trailing = list(self._disjoint_property_lines())
+        trailing += list(self._different_individual_lines())
+        trailing += list(self._universal_axioms())
+        trailing += list(self._orphan_axioms())
+        for _entity, block in self._without_redundant_existence(blocks, trailing):
             if block:
                 body.extend(block)
                 body.append("")
-        body.extend(self._disjoint_property_lines())
-        body.extend(self._different_individual_lines())
-        body.extend(self._universal_axioms())
-        body.extend(self._orphan_axioms())
+        body.extend(trailing)
 
         lines.extend(self._ontology_declarations())
         lines.extend(body)
@@ -314,7 +319,7 @@ class Writer:
         text = "\n".join(lines)
         return text.rstrip("\n") + "\n"
 
-    def _without_redundant_existence(self, blocks):
+    def _without_redundant_existence(self, blocks, trailing=()):
         """Drop a block that says only ``C ⊑ ⊤`` when something else names C.
 
         ``C ⊑ ⊤`` exists so that a class mentioned nowhere else still appears in
@@ -323,9 +328,11 @@ class Writer:
         implementations rendering the same ontology produced documents that
         could not be diffed against each other.
 
-        The test is textual, over the other blocks as rendered, because that is
-        exactly the question being asked: does this name appear anywhere else in
-        the document.
+        The test is textual, over the rest of the document as rendered, because
+        that is exactly the question being asked: does this name appear anywhere
+        else. ``trailing`` is the part that follows the blocks \u2014 disjointness,
+        difference, universal and orphan axioms \u2014 which names classes just as
+        much as a block does.
         """
         existence = {}
         for index, (entity, block) in enumerate(blocks):
@@ -337,6 +344,9 @@ class Writer:
             return blocks
 
         elsewhere = set()
+        for name in existence.values():
+            if any(_names_in(line, name) for line in trailing):
+                elsewhere.add(name)
         for index, (_entity, block) in enumerate(blocks):
             for other_index, name in existence.items():
                 if other_index == index or name in elsewhere:
@@ -1091,8 +1101,19 @@ def _names_in(line, name):
     """Whether ``line`` mentions ``name`` as a whole name rather than a substring.
 
     ``Cat`` must not be found inside ``Catalogue``, nor ``A`` inside ``A1``.
+
+    A dot before the name does not disqualify it. No DLe name contains one \u2014
+    ``NameChar`` is ``NameStart | [0-9] | '-'``, for the local part of a prefixed
+    name as much as for a bare one \u2014 so a dot in rendered output is always the
+    separator in a restriction. Treating it as part of a longer name meant the
+    filler in ``\u2203r.D`` was not seen as naming ``D`` at all, which is the most
+    ordinary way there is to mention a class: a filler-only class kept a
+    ``D \u2291 \u22a4`` line the reference implementation does not write.
+
+    A colon still disqualifies it, and must: the ``D`` in ``skos:D`` is the local
+    part of one name, not a mention of a class called ``D``.
     """
-    return re.search(r"(?<![A-Za-z0-9_:.-])%s(?![A-Za-z0-9_-])" % re.escape(name),
+    return re.search(r"(?<![A-Za-z0-9_:-])%s(?![A-Za-z0-9_-])" % re.escape(name),
                      line) is not None
 
 
