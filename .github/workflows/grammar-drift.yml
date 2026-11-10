@@ -1,5 +1,5 @@
-# Watch for the grammar and conformance corpus drifting away from the reference
-# implementation at quoll/DLe.
+# Watch for the grammar, conformance corpus and file header drifting away from
+# the reference implementation at quoll/DLe.
 #
 # Those files are copies, not shared through a submodule. A copy can silently
 # diverge, and the divergence that matters happens upstream — while nobody is
@@ -103,6 +103,7 @@ jobs:
             echo '```bash'
             echo "cp <DLe>/parsers/src/main/antlr4/org/semanticweb/owlapi/dlesyntax/DLESyntax.g4 grammar/"
             echo "cp <DLe>/parsers/src/test/resources/data/wildlife-reserve-test.dle tests/data/"
+            echo "cp <DLe>/parsers/src/main/resources/org/semanticweb/owlapi/dlesyntax/dle-syntax-header.txt src/addle/header.txt"
             echo "tools/grammar.py generate && tools/grammar.py update"
             echo "make test"
             echo '```'
