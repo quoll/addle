@@ -12,6 +12,23 @@ RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS_NS = "http://www.w3.org/2000/01/rdf-schema#"
 XSD_NS = "http://www.w3.org/2001/XMLSchema#"
 
+#: Prefixes a document may use without declaring them, bound on first use.
+#:
+#: Distinct from :data:`IMPLICIT_PREFIXES`, and the difference is what gets
+#: written. An implicit prefix is never declared on output; one of these is,
+#: whenever the document uses it — which is what the reference implementation
+#: does, and the two must write the same document. A document that names
+#: neither never binds them and so never declares them.
+#:
+#: These two and no others: the file header names exactly this pair beyond the
+#: four already implicit. Anything else is a document's own business.
+WELL_KNOWN_PREFIXES = {
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    # Slash-terminated, unlike the rest: dcterms:creator is
+    # http://purl.org/dc/terms/creator, with no separator of its own to add.
+    "dcterms": "http://purl.org/dc/terms/",
+}
+
 #: Prefixes every DLe document may use without declaring them.
 IMPLICIT_PREFIXES = {
     "": DEFAULT_NS,

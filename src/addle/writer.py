@@ -42,6 +42,7 @@ from .vocab import (
     DOC_IRI,
     FACET_OUTPUT,
     IMPLICIT_PREFIXES,
+    WELL_KNOWN_PREFIXES,
     INLINE_COMMENT_IRI,
     LABEL_IRI,
     OWL_NS,
@@ -145,8 +146,18 @@ class Writer:
         # bare <http://…> IRI — which is not a name in the grammar, so the
         # document could not be read back at all.
         prefixes[""] = self._default_namespace()
+        canonical = {ns: prefix for prefix, ns in WELL_KNOWN_PREFIXES.items()}
         for namespace in self._unprefixed_namespaces(prefixes):
-            prefixes[self._coin_prefix(namespace, prefixes)] = namespace
+            # A well-known namespace keeps the prefix everyone writes it with,
+            # rather than one coined from its last path segment: the reference
+            # implementation writes `skos:` and `dcterms:`, and `core:`/`terms:`
+            # would be a different document for the same ontology. Only reached
+            # for a namespace the document actually uses, so an unused vocabulary
+            # still gains no prefix and no declaration.
+            prefix = canonical.get(namespace)
+            if prefix is None or prefix in prefixes:
+                prefix = self._coin_prefix(namespace, prefixes)
+            prefixes[prefix] = namespace
         if extra:
             prefixes.update(extra)
         return prefixes
@@ -422,12 +433,15 @@ class Writer:
         return entity.iri.startswith(DLE_NS)
 
     def _is_external(self, entity):
-        """Whether an entity belongs to a standard vocabulary this document uses."""
-        return any(
-            entity.iri.startswith(namespace)
-            for prefix, namespace in IMPLICIT_PREFIXES.items()
-            if prefix
-        )
+        """Whether an entity belongs to a standard vocabulary this document uses.
+
+        The well-known namespaces count too. A borrowed term is not this
+        document's to define however its prefix came to be bound, and the
+        reference implementation writes no declaration for one either.
+        """
+        namespaces = [ns for prefix, ns in IMPLICIT_PREFIXES.items() if prefix]
+        namespaces.extend(WELL_KNOWN_PREFIXES.values())
+        return any(entity.iri.startswith(ns) for ns in namespaces)
 
     # ── entity blocks ────────────────────────────────────────────────────────
 
