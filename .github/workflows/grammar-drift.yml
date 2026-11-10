@@ -10,12 +10,28 @@
 # On mismatch this opens an issue rather than only failing. A scheduled workflow
 # that merely goes red is close to useless on a quiet repository, because nobody
 # visits the Actions tab.
+#
+# The schedule is the backstop, not the mechanism. GitHub disables a scheduled
+# workflow after 60 days without repository activity, which is an ordinary amount
+# of quiet for a stable library — so the timer switches itself off during exactly
+# the long gaps it exists to cover. This one had been disabled since October, and
+# the drift it last reported sat in an open issue for four weeks. The upstream
+# repository knows the moment a shared file changes, so it says so: quoll/DLe
+# sends a repository_dispatch and the check runs then, within the minute.
 
 name: grammar drift
 
 on:
+  # Sent by quoll/DLe's notify-addle workflow when a shared file lands on its
+  # main. Only ever fires against this repository's default branch — GitHub
+  # ignores repository_dispatch on every other ref — so a change to this file
+  # does nothing until it is merged.
+  repository_dispatch:
+    types: [dle-shared-files-changed]
   schedule:
-    # Mondays, 07:00 UTC. The grammar changes about once a year; weekly is ample.
+    # Mondays, 07:00 UTC. The backstop for a dispatch that was never sent: a
+    # missing or expired token upstream, or a file changed on a branch that
+    # reached main some other way.
     - cron: "0 7 * * 1"
   workflow_dispatch:
 
@@ -53,11 +69,17 @@ jobs:
 
       - name: Record which reference commit was compared
         if: steps.compare.outputs.status != '0'
+        env:
+          # Set only on a repository_dispatch; empty for a scheduled run.
+          TRIGGER_SHA: ${{ github.event.client_payload.sha }}
         run: |
           {
             echo ""
             echo "Compared against quoll/DLe at $(git -C reference rev-parse --short HEAD)"
             echo "($(git -C reference log -1 --format='%ad, %s' --date=short))"
+            if [ -n "$TRIGGER_SHA" ]; then
+              echo "Triggered by quoll/DLe@${TRIGGER_SHA:0:7}"
+            fi
           } >> drift.txt
 
       # Re-filing every Monday would train you to ignore the issue, so an open
