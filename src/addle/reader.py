@@ -50,6 +50,7 @@ from .vocab import (
     DOC_IRI,
     FACET_KEYWORDS,
     IMPLICIT_PREFIXES,
+    WELL_KNOWN_PREFIXES,
     INLINE_COMMENT_IRI,
     LABEL_IRI,
     OWL_NS,
@@ -191,6 +192,17 @@ class Reader:
             return _strip_angle(ctx.IRI().getText())
         return self.expand(ctx.name().getText())
 
+    def _is_known_prefix(self, prefix):
+        """Whether a name may use this prefix: declared, or well known.
+
+        Asked where the decision turns on a prefix *existing* rather than on what
+        it expands to. Those must not depend on how far into the document the
+        reader has got — ``skos:a:C`` has to mean the same thing at the top of a
+        file and at the bottom — so they ask here rather than waiting for
+        :meth:`expand` to have bound it.
+        """
+        return prefix in self.prefixes or prefix in WELL_KNOWN_PREFIXES
+
     def expand(self, name):
         """Expand a DLe name to a full IRI using the document's prefix map."""
         if name.startswith("<") and name.endswith(">"):
@@ -199,7 +211,13 @@ class Reader:
             prefix, _, local = name.partition(":")
             namespace = self.prefixes.get(prefix)
             if namespace is None:
-                raise DleSemanticError("Unknown prefix %r in name %r" % (prefix, name))
+                namespace = WELL_KNOWN_PREFIXES.get(prefix)
+                if namespace is None:
+                    raise DleSemanticError("Unknown prefix %r in name %r" % (prefix, name))
+                # Binding it here is what puts it in the output: the writer declares
+                # every prefix that is not implicit. A document that never names one
+                # never reaches this line, so never acquires the declaration.
+                self.prefixes[prefix] = namespace
             return namespace + local
         return self.prefixes.get("", DEFAULT_NS) + name
 
@@ -593,7 +611,7 @@ class Reader:
             # is the assertion, and that is the textbook spelling.
             text = ctx.PREFIXED_NAME().getText()
             prefix, _, local = text.partition(":")
-            if prefix in self.prefixes:
+            if self._is_known_prefix(prefix):
                 raise DleSemanticError(
                     "%r on its own is not a statement. %r is a declared prefix, so "
                     "this reads as a name rather than as the assertion %s(%s); put a "
@@ -1290,9 +1308,9 @@ class Reader:
         reading_b = (not spaced and colon > 0 and ":" not in second
                      and lone_class is not None)
         if reading_b:
-            a_valid = first[:colon] in self.prefixes
+            a_valid = self._is_known_prefix(first[:colon])
             b_prefix = first[colon + 1:]
-            b_valid = b_prefix in self.prefixes
+            b_valid = self._is_known_prefix(b_prefix)
             if a_valid and b_valid:
                 raise DleSemanticError(
                     "%r is ambiguous: both %r and %r are declared prefixes, so this is "
