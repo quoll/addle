@@ -794,7 +794,19 @@ class Reader:
             # writes it. Owlready2 maps one IRI to one entity, so there is no
             # class here to subsume, and building a general class axiom over the
             # property raises an error about annotation properties instead.
-            if target is not Thing:
+            if target is Thing:
+                # `p \u2291 \u22a4` beside `p \u2291 owl:topObjectProperty` is not a vacuous
+                # subsumption that can be dropped in silence: it is the whole of
+                # what says the name is also a class. Dropping it loses the pun,
+                # and because role classification crosses a pun downward, every
+                # name beneath it is then read as a property too \u2014 so one
+                # unreported line retypes a hierarchy. The guard here used to
+                # exclude exactly the case the comment above describes.
+                self.warnings.append(
+                    "%s is declared as both a class and a property, which Owlready2 "
+                    "cannot represent in one IRI; the class side is dropped, and "
+                    "names subsumed by it are read as properties" % left_name)
+            else:
                 self.warnings.append(
                     "%s is a property, so the subsumption stated about it in class "
                     "position cannot be represented and is dropped" % left_name)
