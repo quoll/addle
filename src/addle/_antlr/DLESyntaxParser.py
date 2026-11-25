@@ -78,7 +78,7 @@ def serializedATN():
         3,18,9,0,101,137,1,0,0,0,102,103,5,29,0,0,103,104,3,52,26,0,104,
         105,3,18,9,0,105,137,1,0,0,0,106,107,5,30,0,0,107,108,3,52,26,0,
         108,109,3,18,9,0,109,137,1,0,0,0,110,111,5,31,0,0,111,113,3,52,26,
-        0,112,114,3,18,9,0,113,112,1,0,0,0,113,114,1,0,0,0,114,137,1,0,0,
+        0,112,114,3,16,8,0,113,112,1,0,0,0,113,114,1,0,0,0,114,137,1,0,0,
         0,115,116,5,32,0,0,116,117,3,52,26,0,117,118,3,52,26,0,118,119,3,
         16,8,0,119,137,1,0,0,0,120,121,3,52,26,0,121,122,5,1,0,0,122,127,
         3,52,26,0,123,124,5,2,0,0,124,126,3,52,26,0,125,123,1,0,0,0,126,
@@ -892,8 +892,8 @@ class DLESyntaxParser ( Parser ):
         def name(self):
             return self.getTypedRuleContext(DLESyntaxParser.NameContext,0)
 
-        def annotationString(self):
-            return self.getTypedRuleContext(DLESyntaxParser.AnnotationStringContext,0)
+        def annotationValue(self):
+            return self.getTypedRuleContext(DLESyntaxParser.AnnotationValueContext,0)
 
 
         def accept(self, visitor:ParseTreeVisitor):
@@ -1040,10 +1040,10 @@ class DLESyntaxParser ( Parser ):
                 self.name()
                 self.state = 113
                 self._errHandler.sync(self)
-                _la = self._input.LA(1)
-                if _la==48:
+                la_ = self._interp.adaptivePredict(self._input,8,self._ctx)
+                if la_ == 1:
                     self.state = 112
-                    self.annotationString()
+                    self.annotationValue()
 
 
                 pass
