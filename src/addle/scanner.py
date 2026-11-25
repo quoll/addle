@@ -89,13 +89,34 @@ def _property_name(ctx):
 class EntityKinds:
     """The result of pass 1: what kind of thing each name denotes."""
 
-    def __init__(self):
+    def __init__(self, datatype_iris=(), expand=None):
         self.properties = {}       # name -> OBJECT | DATA | ANNOTATION | UNKNOWN
         self.predicates = set()    # names defined with ≝
         self.individuals = set()   # names appearing inside { … }
         self.class_names = set()   # names used in class position
         self.datatypes = set()     # names denoting datatypes
         self._subproperty = []     # (sub, super) candidate pairs
+        # Datatypes the document's imports declare, as IRIs: the importing
+        # document may reach them through a different prefix, so the name as
+        # written is not enough to match on.
+        self._imported_datatype_iris = frozenset(datatype_iris)
+        self._expand = expand
+
+    def names_datatype(self, name):
+        """Whether this name denotes a datatype rather than a class.
+
+        Built in, or declared by something the document imports. The second
+        half matters because a filler is what says whether its property takes
+        objects or data, and a name nothing has declared is a class — so a
+        range on an imported datatype used to make its property an object
+        property, and the contradiction surfaced far away from the cause.
+        """
+        if is_datatype_name(name):
+            return True
+        if not self._imported_datatype_iris or self._expand is None:
+            return False
+        iri = self._expand(name)
+        return iri is not None and iri in self._imported_datatype_iris
 
     # ── recording ────────────────────────────────────────────────────────────
 
@@ -112,7 +133,7 @@ class EntityKinds:
     def note_class(self, name):
         if name is None:
             return
-        if is_datatype_name(name):
+        if self.names_datatype(name):
             self.datatypes.add(name)
         else:
             self.class_names.add(name)
@@ -133,7 +154,7 @@ class EntityKinds:
         return self.properties.get(name) == ANNOTATION
 
     def is_class(self, name):
-        if name in self.properties or is_datatype_name(name):
+        if name in self.properties or self.names_datatype(name):
             return False
         if name in self.predicates:
             # A ≝ definition on its own declares nothing: the reference
@@ -194,8 +215,8 @@ class EntityKinds:
 class _Scanner:
     """Walks the parse tree recording what it learns about each name."""
 
-    def __init__(self):
-        self.kinds = EntityKinds()
+    def __init__(self, datatype_iris=(), expand=None):
+        self.kinds = EntityKinds(datatype_iris, expand)
 
     # ── entry ────────────────────────────────────────────────────────────────
 
@@ -427,7 +448,7 @@ class _Scanner:
             return DATA
         if isinstance(atom, P.NameAtomContext):
             name = _name_text(atom)
-            if is_datatype_name(name):
+            if self.kinds.names_datatype(name):
                 return DATA
             if name in self.kinds.predicates:
                 return DATA
@@ -449,7 +470,7 @@ class _Scanner:
             if isinstance(atom, (P.RestrictedDatatypeAtomContext, P.DataRangeAtomContext)):
                 kinds.add(DATA)
             elif isinstance(atom, P.NameAtomContext):
-                kinds.add(DATA if is_datatype_name(_name_text(atom)) else OBJECT)
+                kinds.add(DATA if self.kinds.names_datatype(_name_text(atom)) else OBJECT)
             elif isinstance(atom, P.OneOfAtomContext):
                 kinds.add(DATA if _one_of_is_literals(atom.oneOfList()) else OBJECT)
         if DATA in kinds:
@@ -581,6 +602,11 @@ def _one_of_is_literals(ctx):
     return any(isinstance(e, P.LiteralElemContext) for e in ctx.oneOfElem())
 
 
-def scan(tree):
-    """Classify every name in ``tree``. Returns :class:`EntityKinds`."""
-    return _Scanner().scan(tree)
+def scan(tree, datatype_iris=(), expand=None):
+    """Classify every name in ``tree``. Returns :class:`EntityKinds`.
+
+    ``datatype_iris`` are the datatypes the document's imports declare, and
+    ``expand`` turns a name into an IRI so they can be recognised under
+    whatever prefix this document uses for them.
+    """
+    return _Scanner(datatype_iris, expand).scan(tree)

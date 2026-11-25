@@ -24,6 +24,7 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urljoin, urlsplit
+from urllib.request import url2pathname
 
 #: Schemes that can actually be retrieved.
 #:
@@ -174,3 +175,143 @@ def document_iri(source):
         return Path(text).resolve().as_uri()
     except (ValueError, OSError, TypeError):
         return None
+
+
+# ── what an import declares ─────────────────────────────────────────────────
+#
+# Kinds here are inferred from how a name is used, and the filler of a
+# restriction is what says whether its property is an object or a data
+# property. A name the reader does not know is a class, so `⊤ ⊑ ∀live.gl:date`
+# made `live` an object property — and the document then went wrong somewhere
+# else entirely, on a sub-property axiom hundreds of lines away. The
+# declaration was there; it was in the imported document. So imports are read
+# before the kinds are settled rather than after.
+
+
+def declared_datatypes(iris, warn=None, _seen=None):
+    """The datatype IRIs declared by the documents ``iris`` names.
+
+    Follows imports transitively, as the reference implementation does by
+    asking for the imports closure. Anything that cannot be read contributes
+    nothing and is reported through ``warn``: a document is still readable
+    without its import, only less well informed, and refusing to parse would
+    be a worse answer than parsing with a caveat.
+
+    Only ``file:`` targets are read. A remote import is not fetched — a parser
+    that reaches the network is a surprise and a place to hang — so it takes
+    the same warning as one that could not be read, which is what it is.
+    """
+    seen = set() if _seen is None else _seen
+    found = set()
+    for iri in iris:
+        if iri in seen:
+            continue
+        seen.add(iri)
+        text = _read_document(iri, warn)
+        if text is None:
+            continue
+        nested, datatypes = _datatypes_in(text, iri)
+        found |= datatypes
+        found |= declared_datatypes(nested, warn, seen)
+    return found
+
+
+def _read_document(iri, warn):
+    scheme = urlsplit(iri).scheme
+    if not scheme:
+        # Still relative, so resolution found no base: the document was read
+        # from a string or a stream and has no location of its own.
+        _warn(warn, iri, "the document has no location to resolve it against")
+        return None
+    if scheme != "file":
+        _warn(warn, iri, "it is not a local file, and imports are not fetched")
+        return None
+    try:
+        return Path(url2pathname(urlsplit(iri).path)).read_text(encoding="utf-8")
+    except OSError as problem:
+        _warn(warn, iri, problem.strerror or str(problem))
+        return None
+    except UnicodeDecodeError:
+        _warn(warn, iri, "it is not UTF-8 text")
+        return None
+
+
+def _warn(warn, iri, why):
+    if warn is None:
+        return
+    # What the reader needs is not that an import failed but that the failure
+    # can have changed the document's meaning, because the place it then goes
+    # wrong is rarely near the import.
+    warn("could not read import <%s>: %s. Names it declares are unknown here, "
+         "so kinds inferred from them may be wrong" % (iri, why))
+
+
+def _datatypes_in(text, iri):
+    """``(imports, datatype IRIs)`` of one document, read for its declarations only.
+
+    A full parse, because a datatype declaration is an ordinary subsumption and
+    only the grammar can tell one from a class axiom. Nothing is built from it:
+    the importing document wants the names, not the axioms.
+    """
+    from ._tree import parse_text
+    from ._antlr.DLESyntaxParser import DLESyntaxParser as P
+
+    try:
+        tree, _tokens, _problems = parse_text(text, source=iri)
+    except Exception:
+        # A broken import is a missing import; the document that declares it is
+        # not the place to report someone else's syntax error.
+        return (), set()
+
+    prefixes = _prefixes_of(tree)
+    datatypes = set()
+    for statement in tree.statement():
+        axiom = statement.getChild(0)
+        if not isinstance(axiom, P.SubClassAxiomContext):
+            continue
+        if axiom.getChild(2).getText() != "rdfs:Literal":
+            continue
+        name = axiom.getChild(0).getText()
+        expanded = _expand_with(prefixes, name)
+        if expanded is not None:
+            datatypes.add(expanded)
+
+    imports = []
+    for decl in tree.importDecl():
+        target = _import_target(prefixes, iri, decl)
+        if target is not None:
+            imports.append(target)
+    return imports, datatypes
+
+
+def _prefixes_of(tree):
+    from .vocab import IMPLICIT_PREFIXES, WELL_KNOWN_PREFIXES
+
+    prefixes = dict(WELL_KNOWN_PREFIXES)
+    prefixes.update(IMPLICIT_PREFIXES)
+    for decl in tree.prefixDecl():
+        text = decl.IRI()
+        value = text.getText()[1:-1] if text is not None else decl.STRING().getText()[1:-1]
+        prefixes[decl.PNAME_NS().getText()[:-1]] = value
+    return prefixes
+
+
+def _expand_with(prefixes, name):
+    """``name`` as an absolute IRI, or ``None`` if its prefix is not declared."""
+    if name.startswith("<") and name.endswith(">"):
+        return name[1:-1]
+    if ":" in name:
+        prefix, _, local = name.partition(":")
+        namespace = prefixes.get(prefix)
+        return None if namespace is None else namespace + local
+    return prefixes.get("", "") + name
+
+
+def _import_target(prefixes, base, decl):
+    text = decl.STRING()
+    if text is not None:
+        return resolve_quoted_import(base, text.getText()[1:-1])
+    ref = decl.iriRef()
+    if ref.IRI() is None:
+        return _expand_with(prefixes, ref.name().getText())
+    return resolve_iri_import(base, ref.IRI().getText()[1:-1])
