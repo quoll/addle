@@ -42,7 +42,12 @@ from ._antlr.DLESyntaxLexer import DLESyntaxLexer
 from ._antlr.DLESyntaxParser import DLESyntaxParser as P
 from . import scanner
 from .errors import DleSemanticError
-from .imports import document_iri, resolve_iri_import, resolve_quoted_import
+from .imports import (
+    declared_datatypes,
+    document_iri,
+    resolve_iri_import,
+    resolve_quoted_import,
+)
 from .scanner import DATA, OBJECT, ANNOTATION
 from .vocab import (
     COMMENT_IRI,
@@ -120,8 +125,17 @@ class Reader:
     # ── entry point ──────────────────────────────────────────────────────────
 
     def read(self, tree, tokens=None):
-        self.kinds = scanner.scan(tree)
+        # Declarations first, and that order is load-bearing: the prefix map
+        # has to exist before an import can be resolved, and what the imports
+        # declare has to be known before the kinds are settled rather than
+        # after. Reading them afterwards is what let a property's range on an
+        # imported datatype make it an object property.
         self._read_declarations(tree)
+        self.kinds = scanner.scan(
+            tree,
+            datatype_iris=declared_datatypes(self.imports, self.warnings.append),
+            expand=self._expand_or_none,
+        )
         self._ensure_ontology()
         comments = _CommentIndex(tokens) if tokens is not None else None
 
@@ -246,6 +260,23 @@ class Reader:
                 self.prefixes[prefix] = namespace
             return namespace + local
         return self.prefixes.get("", DEFAULT_NS) + name
+
+    def _expand_or_none(self, name):
+        """:meth:`expand` for a question, not for a decision.
+
+        The scan asks about names it has not classified yet, including ones
+        under a prefix the document never declares. That is an answer — the
+        name is not an imported datatype — not an error, and it must not bind
+        a well-known prefix as a side effect, which would put a declaration in
+        the output for a prefix the document never used.
+        """
+        if ":" not in name or name.startswith("<"):
+            return self.expand(name)
+        prefix = name.partition(":")[0]
+        if prefix not in self.prefixes and prefix not in WELL_KNOWN_PREFIXES:
+            return None
+        namespace = self.prefixes.get(prefix) or WELL_KNOWN_PREFIXES.get(prefix)
+        return namespace + name.partition(":")[2]
 
     def _namespace(self, ns_iri):
         ns = self._namespaces.get(ns_iri)
