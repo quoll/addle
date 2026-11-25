@@ -53,7 +53,7 @@ def loads(text, world=None, onto=None, base_iri=None, source=None, warnings=None
     from ._tree import parse_text
 
     tree, tokens, _ = parse_text(text, source=source)
-    reader = Reader(world=world, onto=onto, base_iri=base_iri)
+    reader = Reader(world=world, onto=onto, base_iri=base_iri, source=source)
     result = reader.read(tree, tokens)
     if warnings is not None:
         warnings.extend(reader.warnings)
@@ -78,7 +78,7 @@ def load(file, world=None, onto=None, base_iri=None, warnings=None):
     )
 
 
-def dumps(onto, prefixes=None, include_header=True, warnings=None):
+def dumps(onto, prefixes=None, include_header=True, warnings=None, location=None):
     """Render an Owlready2 ontology as DLe text.
 
     Args:
@@ -88,17 +88,30 @@ def dumps(onto, prefixes=None, include_header=True, warnings=None):
         include_header: whether to emit the standard explanatory file header.
         warnings: optional list, extended with anything that could not be
             rendered faithfully.
+        location: where the text is going to be written. An import of a file
+            beside it is then written as that relative path rather than as an
+            absolute ``file:`` IRI, which is what lets the two move together.
+            ``dump`` supplies this from the path it is given.
     """
-    writer = Writer(onto, prefixes=prefixes, include_header=include_header)
+    writer = Writer(onto, prefixes=prefixes, include_header=include_header,
+                    location=location)
     text = writer.render()
     if warnings is not None:
         warnings.extend(writer.warnings)
     return text
 
 
-def dump(onto, file, prefixes=None, include_header=True, warnings=None):
-    """Write an Owlready2 ontology as DLe to a path or open text file."""
-    text = dumps(onto, prefixes=prefixes, include_header=include_header, warnings=warnings)
+def dump(onto, file, prefixes=None, include_header=True, warnings=None, location=None):
+    """Write an Owlready2 ontology as DLe to a path or open text file.
+
+    Where the document is going is part of what it says: an import naming a
+    file beside it is written as that relative path. The destination is taken
+    from ``file`` unless ``location`` overrides it.
+    """
+    if location is None:
+        location = file if not hasattr(file, "write") else getattr(file, "name", None)
+    text = dumps(onto, prefixes=prefixes, include_header=include_header,
+                 warnings=warnings, location=location)
     if hasattr(file, "write"):
         file.write(text)
         return

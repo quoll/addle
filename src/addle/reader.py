@@ -42,6 +42,7 @@ from ._antlr.DLESyntaxLexer import DLESyntaxLexer
 from ._antlr.DLESyntaxParser import DLESyntaxParser as P
 from . import scanner
 from .errors import DleSemanticError
+from .imports import document_iri, resolve_iri_import, resolve_quoted_import
 from .scanner import DATA, OBJECT, ANNOTATION
 from .vocab import (
     COMMENT_IRI,
@@ -102,10 +103,13 @@ _CHARACTERISTICS = {
 class Reader:
     """Builds one Owlready2 ontology from one DLe parse tree."""
 
-    def __init__(self, world=None, onto=None, base_iri=None):
+    def __init__(self, world=None, onto=None, base_iri=None, source=None):
         self.world = world or (onto.world if onto is not None else owlready2.default_world)
         self.onto = onto
         self.requested_base_iri = base_iri
+        #: Where this document is, so a relative `@import` has something to
+        #: resolve against. None for a document read from a string.
+        self.document_iri = document_iri(source)
         self.prefixes = dict(IMPLICIT_PREFIXES)
         self.kinds = None
         self.warnings = []
@@ -150,7 +154,29 @@ class Reader:
         for decl in tree.versionDecl():
             self.version_iri = self._declared_iri(decl)
         for decl in tree.importDecl():
-            self.imports.append(self._declared_iri(decl))
+            self.imports.append(self._import_iri(decl))
+
+    def _import_iri(self, decl):
+        """Where an ``@import`` points, resolved against this document.
+
+        A relative reference names a file beside the one that declared it,
+        which is the only base that means anything, and is the shape every
+        ontology split across files has. Handed on as written it named nothing.
+        The two spellings resolve differently: the bracketed form is an IRI
+        reference already, while a quoted one is a literal path and is
+        percent-encoded on the way through.
+
+        A prefixed name is neither — it expands through the prefix map to an
+        absolute IRI, and there is nothing left to resolve.
+        """
+        text = decl.STRING()
+        if text is not None:
+            quoted, _lang = _split_tagged(text.getText())
+            return resolve_quoted_import(self.document_iri, quoted[1:-1])
+        ref = decl.iriRef()
+        if ref.IRI() is None:
+            return self.expand(ref.name().getText())
+        return resolve_iri_import(self.document_iri, _strip_angle(ref.IRI().getText()))
 
     def _declared_iri(self, decl):
         """The IRI a document-level declaration names.
