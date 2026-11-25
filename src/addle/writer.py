@@ -32,6 +32,7 @@ from owlready2 import (
 from owlready2.base import EXACTLY, HAS_SELF, MAX, MIN, ONLY, SOME, VALUE
 from owlready2.class_construct import LogicalClassConstruct
 
+from .imports import document_iri, relative_import_ref
 from .vocab import (
     RDF_NS,
     split_iri,
@@ -119,10 +120,14 @@ def header_text():
 class Writer:
     """Renders one Owlready2 ontology as DLe text."""
 
-    def __init__(self, onto, prefixes=None, include_header=True):
+    def __init__(self, onto, prefixes=None, include_header=True, location=None):
         self.onto = onto
         self.world = onto.world
         self.include_header = include_header
+        #: Where this document is going, so an import of a file beside it can
+        #: be written as the relative path it came in as. None when the text is
+        #: not being written to a known place.
+        self.location = document_iri(location)
         self._labels = {}   # dle: synthetic class IRI -> its expression text
         self._inverse_pairs = set()
         self._disjoint_pairs = set()
@@ -375,7 +380,12 @@ class Writer:
             lines.append("@version <%s>" % value)
 
         for imported in self.onto.imported_ontologies:
-            lines.append("@import <%s>" % imported.base_iri.rstrip("#/"))
+            # A file beside this document is written as the relative path it
+            # arrived as, which is what keeps the pair movable together; an
+            # absolute IRI could only be right where it was written.
+            lines.append("@import %s"
+                         % relative_import_ref(self.location,
+                                               imported.base_iri.rstrip("#/")))
 
         for prefix, namespace in self._declared_prefixes():
             lines.append("@prefix %s: <%s>" % (prefix, namespace))
