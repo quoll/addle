@@ -352,11 +352,7 @@ class Reader:
             self._annotate(ctx.name(), STORAGE_IRI, self._annotation_string(ctx.annotationString()))
 
         elif isinstance(ctx, P.DbAnnotationContext):
-            # `@db name` with no string means "stored under its own name".
-            text = ctx.annotationString()
-            value = (self._annotation_string(text) if text is not None
-                     else ctx.name().getText())
-            self._annotate(ctx.name(), DB_IRI, value)
+            self._db_annotation(ctx)
 
         elif isinstance(ctx, P.AnnAnnotationContext):
             # The subject is declared for the same reason `_annotate` declares
@@ -428,6 +424,28 @@ class Reader:
             self.entity_for(name)
         else:
             self._declare_if_used(name)
+
+    def _db_annotation(self, ctx):
+        """``@db`` in its three forms.
+
+        ``rdfs:isDefinedBy`` ranges over rdfs:Resource, so the identifier may be
+        a literal or an IRI: a string is a key the database is queried by, a
+        name is the resource it is queried by once the store speaks RDF. The
+        bare form names the subject itself, not its name written out as a
+        string — ``@db A`` says A is in the database under its own identifier,
+        and the identifier of a resource is its IRI.
+        """
+        name = ctx.name().getText()
+        self._declare_subject(name)
+        subject = self.expand(name)
+        given = ctx.annotationValue()
+        if given is None:
+            self._add_object_triple(subject, DB_IRI, subject)
+        elif isinstance(given, P.StringAnnotationValueContext):
+            self._add_data_triple(
+                subject, DB_IRI, self._annotation_string(given.annotationString()))
+        else:
+            self._add_object_triple(subject, DB_IRI, self.expand(given.name().getText()))
 
     def _annotate(self, name_ctx, property_iri, value):
         name = name_ctx.getText()

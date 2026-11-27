@@ -263,9 +263,53 @@ def test_storage_and_db(parse):
     assert onto.Animal.isDefinedBy == ["animal_id"]
 
 
-def test_db_without_a_string_uses_the_name(parse):
+def test_db_without_a_value_names_the_subject_itself(parse):
+    """`@db A` says A is in the database under its own identifier.
+
+    The identifier of a resource is its IRI, so the bare form points at the
+    subject rather than at its name written out as a string. The two are not
+    interchangeable: a string is a key the store is queried by, and a reader
+    given one could not tell which had been meant.
+    """
     onto = parse("Animal ⊑ ⊤\n@db Animal\n")
+    assert onto.Animal.isDefinedBy == [onto.Animal]
+
+
+def test_db_accepts_a_name_as_the_identifier(parse):
+    """rdfs:isDefinedBy ranges over rdfs:Resource, so a resource is a value."""
+    onto = parse("Animal ⊑ ⊤\nBeast ⊑ ⊤\n@db Animal Beast\n")
+    assert onto.Animal.isDefinedBy == [onto.Beast]
+
+
+def test_db_accepts_a_curie_as_the_identifier(parse):
+    onto = parse("@prefix ex: <http://example.org/x#>\n"
+                 "Animal ⊑ ⊤\n@db Animal ex:beast\n")
+    assert _db_resources(onto, onto.Animal.iri) == ["http://example.org/x#beast"]
+
+
+def test_db_with_a_string_equal_to_the_name_stays_a_string(parse):
+    """The literal form is distinct from the bare form even when they look alike.
+
+    `@db Animal "Animal"` is a key that happens to spell the name; `@db Animal`
+    is the IRI. Collapsing one into the other would change the triple.
+    """
+    onto = parse('Animal ⊑ ⊤\n@db Animal "Animal"\n')
     assert onto.Animal.isDefinedBy == ["Animal"]
+    assert _db_resources(onto, onto.Animal.iri) == []
+
+
+def _db_resources(onto, subject_iri):
+    """The IRIs an @db points at, read as triples rather than through the
+    entity accessor, which reports a literal and a resource the same way."""
+    world = onto.world
+    return [
+        world._unabbreviate(o)
+        for _, _, o in world._get_obj_triples_spo_spo(
+            world._abbreviate(subject_iri),
+            world._abbreviate("http://www.w3.org/2000/01/rdf-schema#isDefinedBy"),
+            None,
+        )
+    ]
 
 
 def test_ann_with_a_custom_property(parse):
