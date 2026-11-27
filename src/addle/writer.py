@@ -477,13 +477,19 @@ class Writer:
         name = self.shorten(entity.iri)
         lines = []
 
-        for value in self._data_values(entity.iri, DB_IRI):
-            # `@db X` and `@db X "id"` differ only in whether the stored
-            # identifier is the entity's own name.
-            if value == name:
+        # The identifier may be a resource as well as a key, so both the object
+        # and the data triples are read. An IRI equal to the subject's own is
+        # the bare `@db X`; any other is written out.
+        for value in self._object_values(entity.iri, DB_IRI):
+            if value == entity.iri:
                 lines.append("@db %s" % name)
             else:
-                lines.append("@db %s %s" % (name, self._annotation_literal(value)))
+                lines.append("@db %s %s" % (name, self.shorten(value)))
+        # A literal is always written, now that the bare form means the IRI.
+        # Suppressing one equal to the name and letting the reader put it back
+        # would hand back an IRI instead, quietly changing the annotation.
+        for value in self._data_values(entity.iri, DB_IRI):
+            lines.append("@db %s %s" % (name, self._annotation_literal(value)))
 
         for iri, keyword in _KEYWORD_ANNOTATIONS:
             for value in self._data_values(entity.iri, iri):

@@ -107,6 +107,9 @@ def test_header_is_reparseable():
         "⊤ ⊑ ∀a.Thing\n⊤ ⊑ ∀b.Thing\n⊤ ⊑ ∀c.Thing\na ∘ b ⊑ c\n",
         "⊤ ⊑ ∀owns.Animal\nownedBy ≡ owns⁻\n",
         'Animal ⊑ ⊤\n@db Animal "a"\n@label Animal "A"\n@doc Animal "d"\n',
+        "Animal ⊑ ⊤\n@db Animal\n",
+        "Animal ⊑ ⊤\nBeast ⊑ ⊤\n@db Animal Beast\n",
+        'Animal ⊑ ⊤\n@db Animal "Animal"\n',
         "greaterThan(x,y) ≝ x > y\n",
         "afterNow(x) ≝ x > now()\n⊤ ⊑ ∀when.xsd:dateTime\nF ≡ ∃when.afterNow\n",
         "Both ≡ A ⊓ ¬B\n",
@@ -119,6 +122,31 @@ def test_header_is_reparseable():
 )
 def test_small_documents_are_idempotent(document):
     once = rewrite(document)
+    assert rewrite(once) == once
+
+
+def test_the_three_db_forms_stay_distinct(world):
+    """Each `@db` form has to come back as itself, not as a near neighbour.
+
+    The bare form and the string form look alike on the page when the key
+    spells the name, and before the identifier could be a resource the writer
+    collapsed one into the other. They are different triples — a literal key
+    and an IRI — so a document holding all three must write all three back.
+    """
+    document = (
+        "Animal \u2291 \u22a4\n"
+        "Beast \u2291 \u22a4\n"
+        "@db Animal\n"
+        "@db Beast Animal\n"
+        '@db Beast "Beast"\n'
+    )
+    once = rewrite(document)
+    assert "@db Animal" in once
+    assert "@db Beast Animal" in once
+    assert '@db Beast "Beast"' in once
+    # The bare form must not have acquired a value, nor the string form lost
+    # its quotes; both would still contain the substrings above.
+    assert "@db Animal Animal" not in once
     assert rewrite(once) == once
 
 

@@ -16,11 +16,24 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Named so the check keeps its identity when the runner is part of the
+    # matrix; the default would spell it `test (3.9, ubuntu-24.04)`.
+    name: test (${{ matrix.python-version }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        runner: [ubuntu-latest]
+        include:
+          # ubuntu-latest has rolled to 26.04, for which actions/python-versions
+          # publishes no 3.9 build — 3.9 reached end of life in October 2025, so
+          # it will not gain one. Pinned to the newest image that still has it
+          # rather than dropped, because pyproject.toml says `>=3.9` and an
+          # untested support claim is worse than an old runner. Retiring 3.9 is
+          # a decision about who can install addle, not about CI.
+          - python-version: "3.9"
+            runner: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
